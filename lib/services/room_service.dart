@@ -1,7 +1,8 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'dart:async';
 import 'dart:math';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class RoomService {
   final FirebaseFirestore db = FirebaseFirestore.instance;
@@ -22,9 +23,7 @@ class RoomService {
   Future<Map<String, String>> createRoom(String title, {bool isPrivate = false}) async {
     final user = auth.currentUser!;
 
-    // create unique short code
     String code = _generateCode(6);
-    // ensure uniqueness (simple loop)
     for (int i = 0; i < 5; i++) {
       final snap = await db
           .collection('rooms')
@@ -93,5 +92,86 @@ class RoomService {
     );
 
     return roomId;
+  }
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> watchRoomQueue(String roomId) {
+    return db.collection('rooms').doc(roomId).collection('queue').orderBy('voteScore', descending: true).snapshots();
+  }
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> watchRoomMembers(String roomId) {
+    return db.collection('rooms').doc(roomId).collection('members').snapshots();
+  }
+
+  Future<void> addSongToQueue({
+    required String roomId,
+    required String title,
+    required String artist,
+    required String genre,
+    List<String> moods = const [],
+  }) async {
+    final user = auth.currentUser!;
+    final songRef = db.collection('rooms').doc(roomId).collection('queue').doc();
+
+    final batch = db.batch();
+    batch.set(songRef, {
+      'title': title,
+      'artist': artist,
+      'genre': genre.toLowerCase(),
+      'moods': moods,
+      'addedBy': user.uid,
+      'voteScore': 0,
+      'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+
+    await _withStepTimeout(
+      batch.commit(),
+      'Adding song to room queue',
+      timeout: const Duration(seconds: 12),
+    );
+  }
+
+  Future<void> voteOnSong({
+    required String roomId,
+    required String songId,
+    required int voteValue,
+  }) async {
+    final user = auth.currentUser!;
+    final songRef = db.collection('rooms').doc(roomId).collection('queue').doc(songId);
+    final voteRef = songRef.collection('votes').doc(user.uid);
+
+    await _withStepTimeout(
+      db.runTransaction((transaction) async {
+        final songSnap = await transaction.get(songRef);
+        if (!songSnap.exists) {
+          throw Exception('Song not found');
+        }
+
+        final songData = songSnap.data() as Map<String, dynamic>;
+        final currentScore = (songData['voteScore'] ?? 0) as int;
+
+        int previousVote = 0;
+        final voteSnap = await transaction.get(voteRef);
+        if (voteSnap.exists) {
+          final voteData = voteSnap.data() as Map<String, dynamic>;
+          previousVote = (voteData['voteValue'] ?? 0) as int;
+        }
+
+        final nextScore = currentScore - previousVote + voteValue;
+
+        transaction.set(voteRef, {
+          'userId': user.uid,
+          'voteValue': voteValue,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+
+        transaction.update(songRef, {
+          'voteScore': nextScore,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }),
+      'Voting on song',
+      timeout: const Duration(seconds: 12),
+    );
   }
 }
