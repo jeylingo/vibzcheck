@@ -38,7 +38,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       );
     } catch (e) {
       setState(() {
-        error = 'Registration failed';
+        error = e.toString();
       });
     }
 
