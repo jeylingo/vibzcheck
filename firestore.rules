@@ -1,0 +1,46 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(roomId) {
+      return signedIn() && get(/databases/$(database)/documents/rooms/$(roomId)).data.ownerId == request.auth.uid;
+    }
+
+    function isMember(roomId) {
+      return signedIn() && exists(/databases/$(database)/documents/rooms/$(roomId)/members/$(request.auth.uid));
+    }
+
+    match /rooms/{roomId} {
+      allow read: if signedIn() && (resource.data.isPrivate == false || isMember(roomId) || isOwner(roomId));
+      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow update, delete: if isOwner(roomId);
+
+      match /members/{uid} {
+        allow read: if isMember(roomId) || isOwner(roomId);
+        allow create: if signedIn() && uid == request.auth.uid;
+        allow update: if signedIn() && uid == request.auth.uid;
+        allow delete: if isOwner(roomId) || uid == request.auth.uid;
+      }
+
+      match /queue/{songId} {
+        allow read: if isMember(roomId) || isOwner(roomId);
+        allow create: if isMember(roomId) || isOwner(roomId);
+        allow update, delete: if isMember(roomId) || isOwner(roomId);
+
+        match /votes/{uid} {
+          allow read: if isMember(roomId) || isOwner(roomId);
+          allow create, update, delete: if signedIn() && uid == request.auth.uid && (isMember(roomId) || isOwner(roomId));
+        }
+      }
+
+      match /messages/{messageId} {
+        allow read: if isMember(roomId) || isOwner(roomId);
+        allow create: if isMember(roomId) || isOwner(roomId);
+        allow update, delete: if false;
+      }
+    }
+  }
+}

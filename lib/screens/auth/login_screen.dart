@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import '../../services/auth_service.dart';
 import '../home/home_screen.dart';
@@ -33,17 +34,23 @@ class _LoginScreenState extends State<LoginScreen> {
 
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (_) => HomeScreen()), // ✅ NO const
+        MaterialPageRoute(builder: (_) => const HomeScreen()),
       );
+    } on FirebaseAuthException catch (e) {
+      setState(() {
+        error = e.message ?? 'Login failed';
+      });
     } catch (e) {
       setState(() {
-        error = 'Login failed';
+        error = e.toString().replaceFirst('Exception: ', '');
       });
+    } finally {
+      if (mounted) {
+        setState(() {
+          loading = false;
+        });
+      }
     }
-
-    setState(() {
-      loading = false;
-    });
   }
 
   @override

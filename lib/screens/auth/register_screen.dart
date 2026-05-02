@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../services/auth_service.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import '../home/home_screen.dart';
+import 'registration_success_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -35,7 +35,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (_) => HomeScreen()), // ✅ NO const
+        MaterialPageRoute(builder: (_) => const RegistrationSuccessScreen()),
       );
     } on FirebaseAuthException catch (e) {
       setState(() {
@@ -43,7 +43,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       });
     } catch (e) {
       setState(() {
-        error = 'Registration failed: ${e.toString()}';
+        error = e.toString().replaceFirst('Exception: ', '');
       });
     }
 

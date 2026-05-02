@@ -8,17 +8,27 @@ class AuthService {
   User? get currentUser => auth.currentUser;
 
   Future<void> register(String name, String email, String password) async {
-    final userCredential = await auth.createUserWithEmailAndPassword(
-      email: email,
-      password: password,
-    );
+    final userCredential = await auth
+        .createUserWithEmailAndPassword(
+          email: email,
+          password: password,
+        )
+        .timeout(const Duration(seconds: 15),
+            onTimeout: () =>
+                throw Exception('Sign-up took too long. Check your connection.'));
 
-    await db.collection('users').doc(userCredential.user!.uid).set({
-      'uid': userCredential.user!.uid,
-      'name': name,
-      'email': email,
-      'createdAt': FieldValue.serverTimestamp(),
-    });
+    await db
+        .collection('users')
+        .doc(userCredential.user!.uid)
+        .set({
+          'uid': userCredential.user!.uid,
+          'name': name,
+          'email': email,
+          'createdAt': FieldValue.serverTimestamp(),
+        })
+        .timeout(const Duration(seconds: 10),
+            onTimeout: () => throw Exception(
+                'Saving profile took too long. Try again.'));
   }
 
   Future<void> login(String email, String password) async {
