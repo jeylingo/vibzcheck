@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../../services/room_service.dart';
@@ -17,6 +18,8 @@ class _RoomScreenState extends State<RoomScreen> {
   final RoomService service = RoomService();
   bool addingSong = false;
   String error = '';
+
+  User? get currentUser => FirebaseAuth.instance.currentUser;
 
   Future<void> _showAddSongDialog() async {
     final titleController = TextEditingController();
@@ -58,9 +61,7 @@ class _RoomScreenState extends State<RoomScreen> {
 
                 if (title.isEmpty || artist.isEmpty || genre.isEmpty) {
                   if (mounted) {
-                    setState(() {
-                      error = 'Title, artist, and genre are required.';
-                    });
+                    setState(() => error = 'Title, artist, and genre are required.');
                   }
                   return;
                 }
@@ -81,15 +82,11 @@ class _RoomScreenState extends State<RoomScreen> {
                   );
                 } catch (e) {
                   if (mounted) {
-                    setState(() {
-                      error = e.toString();
-                    });
+                    setState(() => error = e.toString());
                   }
                 } finally {
                   if (mounted) {
-                    setState(() {
-                      addingSong = false;
-                    });
+                    setState(() => addingSong = false);
                   }
                 }
               },
@@ -102,18 +99,44 @@ class _RoomScreenState extends State<RoomScreen> {
   }
 
   Future<void> _vote(String songId, int value) async {
-    setState(() {
-      error = '';
-    });
+    setState(() => error = '');
 
     try {
       await service.voteOnSong(roomId: widget.roomId, songId: songId, voteValue: value);
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          error = e.toString();
-        });
-      }
+      if (mounted) setState(() => error = e.toString());
+    }
+  }
+
+  Future<void> _moveUp(String songId) async {
+    try {
+      await service.moveSongUp(roomId: widget.roomId, songId: songId);
+    } catch (e) {
+      if (mounted) setState(() => error = e.toString());
+    }
+  }
+
+  Future<void> _remove(String songId) async {
+    try {
+      await service.removeSong(roomId: widget.roomId, songId: songId);
+    } catch (e) {
+      if (mounted) setState(() => error = e.toString());
+    }
+  }
+
+  Future<void> _skip() async {
+    try {
+      await service.skipToNext(roomId: widget.roomId);
+    } catch (e) {
+      if (mounted) setState(() => error = e.toString());
+    }
+  }
+
+  Future<void> _toggleLock(bool locked) async {
+    try {
+      await service.setQueueLocked(roomId: widget.roomId, locked: locked);
+    } catch (e) {
+      if (mounted) setState(() => error = e.toString());
     }
   }
 
@@ -121,6 +144,8 @@ class _RoomScreenState extends State<RoomScreen> {
   Widget build(BuildContext context) {
     final queueStream = service.watchRoomQueue(widget.roomId);
     final membersStream = service.watchRoomMembers(widget.roomId);
+    final roomStateStream = service.watchRoomState(widget.roomId);
+    final historyStream = service.watchRoomHistory(widget.roomId);
 
     return Scaffold(
       appBar: AppBar(
@@ -134,94 +159,172 @@ class _RoomScreenState extends State<RoomScreen> {
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Room ID: ${widget.roomId}', style: Theme.of(context).textTheme.bodyMedium),
-            const SizedBox(height: 12),
-            if (error.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Text(error, style: const TextStyle(color: Colors.red)),
-              ),
-            const Text('Members', style: TextStyle(fontWeight: FontWeight.bold)),
-            SizedBox(
-              height: 84,
-              child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                stream: membersStream,
-                builder: (context, snapshot) {
-                  if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-                  final docs = snapshot.data!.docs;
-                  if (docs.isEmpty) return const Center(child: Text('No members yet'));
-                  return ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: docs.length,
-                    separatorBuilder: (context, index) => const SizedBox(width: 8),
-                    itemBuilder: (context, index) {
-                      final data = docs[index].data();
-                      return Chip(label: Text(data['displayName'] ?? data['uid'] ?? 'Member'));
-                    },
-                  );
-                },
-              ),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text('Queue', style: TextStyle(fontWeight: FontWeight.bold)),
-                ElevatedButton.icon(
-                  onPressed: addingSong ? null : _showAddSongDialog,
-                  icon: const Icon(Icons.add),
-                  label: const Text('Add Song'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Expanded(
-              child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                stream: queueStream,
-                builder: (context, snapshot) {
-                  if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-                  final docs = snapshot.data!.docs;
-                  if (docs.isEmpty) return const Center(child: Text('Queue is empty'));
-                  return ListView.separated(
-                    itemCount: docs.length,
-                    separatorBuilder: (context, index) => const SizedBox(height: 8),
-                    itemBuilder: (context, index) {
-                      final doc = docs[index];
-                      final data = doc.data();
-                      final title = data['title'] ?? '';
-                      final artist = data['artist'] ?? '';
-                      final score = data['voteScore'] ?? 0;
-                      final genre = data['genre'] ?? '';
+        child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+          stream: roomStateStream,
+          builder: (context, roomSnapshot) {
+            final roomData = roomSnapshot.data?.data();
+            final isHost = roomData != null && currentUser != null && roomData['ownerId'] == currentUser!.uid;
+            final queueLocked = roomData?['queueLocked'] == true;
+            final nowPlaying = roomData?['nowPlaying'] as Map<String, dynamic>?;
 
-                      return Card(
-                        child: ListTile(
-                          title: Text(title),
-                          subtitle: Text('$artist • $genre'),
-                          leading: CircleAvatar(child: Text('$score')),
-                          trailing: Wrap(
-                            spacing: 8,
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Room ID: ${widget.roomId}', style: Theme.of(context).textTheme.bodyMedium),
+                const SizedBox(height: 12),
+                if (error.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Text(error, style: const TextStyle(color: Colors.red)),
+                  ),
+                Card(
+                  child: ListTile(
+                    title: const Text('Now Playing'),
+                    subtitle: nowPlaying == null
+                        ? const Text('Nothing is playing yet')
+                        : Text('${nowPlaying['title'] ?? ''} • ${nowPlaying['artist'] ?? ''}'),
+                    trailing: isHost
+                        ? Row(
+                            mainAxisSize: MainAxisSize.min,
                             children: [
-                              IconButton(
-                                onPressed: () => _vote(doc.id, 1),
-                                icon: const Icon(Icons.thumb_up),
-                              ),
-                              IconButton(
-                                onPressed: () => _vote(doc.id, -1),
-                                icon: const Icon(Icons.thumb_down),
-                              ),
+                              Text(queueLocked ? 'Locked' : 'Open'),
+                              Switch(value: queueLocked, onChanged: _toggleLock),
                             ],
-                          ),
-                        ),
+                          )
+                        : Text(queueLocked ? 'Locked by host' : 'Open'),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                if (isHost)
+                  Row(
+                    children: [
+                      ElevatedButton.icon(
+                        onPressed: _skip,
+                        icon: const Icon(Icons.skip_next),
+                        label: const Text('Skip'),
+                      ),
+                      const SizedBox(width: 12),
+                      OutlinedButton.icon(
+                        onPressed: addingSong ? null : _showAddSongDialog,
+                        icon: const Icon(Icons.add),
+                        label: const Text('Add Song'),
+                      ),
+                    ],
+                  )
+                else
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: ElevatedButton.icon(
+                      onPressed: addingSong ? null : _showAddSongDialog,
+                      icon: const Icon(Icons.add),
+                      label: const Text('Add Song'),
+                    ),
+                  ),
+                const SizedBox(height: 16),
+                const Text('Members', style: TextStyle(fontWeight: FontWeight.bold)),
+                SizedBox(
+                  height: 84,
+                  child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                    stream: membersStream,
+                    builder: (context, snapshot) {
+                      if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+                      final docs = snapshot.data!.docs;
+                      if (docs.isEmpty) return const Center(child: Text('No members yet'));
+                      return ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: docs.length,
+                        separatorBuilder: (context, index) => const SizedBox(width: 8),
+                        itemBuilder: (context, index) {
+                          final data = docs[index].data();
+                          return Chip(label: Text(data['displayName'] ?? data['uid'] ?? 'Member'));
+                        },
                       );
                     },
-                  );
-                },
-              ),
-            ),
-          ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text('Up Next', style: TextStyle(fontWeight: FontWeight.bold)),
+                Expanded(
+                  child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                    stream: queueStream,
+                    builder: (context, snapshot) {
+                      if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+                      final docs = snapshot.data!.docs;
+                      if (docs.isEmpty) return const Center(child: Text('Queue is empty'));
+                      return ListView.separated(
+                        itemCount: docs.length,
+                        separatorBuilder: (context, index) => const SizedBox(height: 8),
+                        itemBuilder: (context, index) {
+                          final doc = docs[index];
+                          final data = doc.data();
+                          final title = data['title'] ?? '';
+                          final artist = data['artist'] ?? '';
+                          final score = data['voteScore'] ?? 0;
+                          final genre = data['genre'] ?? '';
+
+                          return Card(
+                            child: ListTile(
+                              title: Text(title),
+                              subtitle: Text('$artist • $genre'),
+                              leading: CircleAvatar(child: Text('$score')),
+                              trailing: Wrap(
+                                spacing: 8,
+                                children: [
+                                  IconButton(
+                                    onPressed: () => _vote(doc.id, 1),
+                                    icon: const Icon(Icons.thumb_up),
+                                  ),
+                                  IconButton(
+                                    onPressed: () => _vote(doc.id, -1),
+                                    icon: const Icon(Icons.thumb_down),
+                                  ),
+                                  if (isHost)
+                                    IconButton(
+                                      onPressed: () => _moveUp(doc.id),
+                                      icon: const Icon(Icons.arrow_upward),
+                                    ),
+                                  if (isHost)
+                                    IconButton(
+                                      onPressed: () => _remove(doc.id),
+                                      icon: const Icon(Icons.delete),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text('History', style: TextStyle(fontWeight: FontWeight.bold)),
+                SizedBox(
+                  height: 120,
+                  child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                    stream: historyStream,
+                    builder: (context, snapshot) {
+                      if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+                      final docs = snapshot.data!.docs;
+                      if (docs.isEmpty) return const Center(child: Text('No history yet'));
+                      return ListView.separated(
+                        itemCount: docs.length,
+                        separatorBuilder: (context, index) => const SizedBox(height: 8),
+                        itemBuilder: (context, index) {
+                          final data = docs[index].data();
+                          return ListTile(
+                            dense: true,
+                            title: Text(data['title'] ?? ''),
+                            subtitle: Text(data['artist'] ?? ''),
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
