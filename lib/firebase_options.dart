@@ -17,29 +17,17 @@ import 'package:flutter/foundation.dart'
 class DefaultFirebaseOptions {
   static FirebaseOptions get currentPlatform {
     if (kIsWeb) {
-      throw UnsupportedError(
-        'DefaultFirebaseOptions have not been configured for web - '
-        'you can reconfigure this by running the FlutterFire CLI again.',
-      );
+      return web;
     }
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
         return android;
       case TargetPlatform.iOS:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for ios - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return ios;
       case TargetPlatform.macOS:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for macos - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return macos;
       case TargetPlatform.windows:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for windows - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return windows;
       case TargetPlatform.linux:
         throw UnsupportedError(
           'DefaultFirebaseOptions have not been configured for linux - '
@@ -52,11 +40,50 @@ class DefaultFirebaseOptions {
     }
   }
 
-  static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyCuJa-hCk2QhfENZz-RliaX2bdZerkRaDI',
-    appId: '1:475638086512:android:42f24b4d8ee235691eadb5',
-    messagingSenderId: '475638086512',
-    projectId: 'fcm-app-c5b3f',
-    storageBucket: 'fcm-app-c5b3f.firebasestorage.app',
+  static const FirebaseOptions web = FirebaseOptions(
+    apiKey: 'AIzaSyDe6KZ7ISsDbev0mJOTZPABb_3LVl3ceTM',
+    appId: '1:58412226753:web:6ce0057280ebb1882d1c40',
+    messagingSenderId: '58412226753',
+    projectId: 'vibzcheck-4ccd2',
+    authDomain: 'vibzcheck-4ccd2.firebaseapp.com',
+    storageBucket: 'vibzcheck-4ccd2.firebasestorage.app',
+    measurementId: 'G-PVCXWTHKKZ',
   );
+
+  static const FirebaseOptions android = FirebaseOptions(
+    apiKey: 'AIzaSyD-MwLRPA_2gL6oMX4PP79sXp1ODTEGPcw',
+    appId: '1:58412226753:android:4aa5dd824f174c9d2d1c40',
+    messagingSenderId: '58412226753',
+    projectId: 'vibzcheck-4ccd2',
+    storageBucket: 'vibzcheck-4ccd2.firebasestorage.app',
+  );
+
+  static const FirebaseOptions ios = FirebaseOptions(
+    apiKey: 'AIzaSyDChArRQAEYwmMcK6ELMFZXORQXKCFcNxk',
+    appId: '1:58412226753:ios:9e9432ca4da7eeb12d1c40',
+    messagingSenderId: '58412226753',
+    projectId: 'vibzcheck-4ccd2',
+    storageBucket: 'vibzcheck-4ccd2.firebasestorage.app',
+    iosBundleId: 'com.example.vibzcheck',
+  );
+
+  static const FirebaseOptions macos = FirebaseOptions(
+    apiKey: 'AIzaSyDChArRQAEYwmMcK6ELMFZXORQXKCFcNxk',
+    appId: '1:58412226753:ios:9e9432ca4da7eeb12d1c40',
+    messagingSenderId: '58412226753',
+    projectId: 'vibzcheck-4ccd2',
+    storageBucket: 'vibzcheck-4ccd2.firebasestorage.app',
+    iosBundleId: 'com.example.vibzcheck',
+  );
+
+  static const FirebaseOptions windows = FirebaseOptions(
+    apiKey: 'AIzaSyDe6KZ7ISsDbev0mJOTZPABb_3LVl3ceTM',
+    appId: '1:58412226753:web:9eb7b571b4fce5542d1c40',
+    messagingSenderId: '58412226753',
+    projectId: 'vibzcheck-4ccd2',
+    authDomain: 'vibzcheck-4ccd2.firebaseapp.com',
+    storageBucket: 'vibzcheck-4ccd2.firebasestorage.app',
+    measurementId: 'G-0SE3V0TW1E',
+  );
+
 }
