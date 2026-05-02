@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../services/playlist_service.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class CreatePlaylistScreen extends StatefulWidget {
   const CreatePlaylistScreen({super.key});
@@ -12,14 +13,37 @@ class _CreatePlaylistScreenState extends State<CreatePlaylistScreen> {
   final titleController = TextEditingController();
   String mood = 'chill';
 
-  Future<void> create() async {
-    await PlaylistService().createPlaylist(
-      titleController.text.trim(),
-      mood,
-    );
+  bool loading = false;
+  String error = '';
 
-    if (!mounted) return;
-    Navigator.pop(context);
+  Future<void> create() async {
+    setState(() {
+      loading = true;
+      error = '';
+    });
+
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) throw Exception('Not signed in');
+
+      await PlaylistService().createPlaylist(
+        titleController.text.trim(),
+        mood,
+      );
+
+      if (!mounted) return;
+      Navigator.pop(context);
+    } catch (e) {
+      setState(() {
+        error = 'Create failed: ${e.toString()}';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          loading = false;
+        });
+      }
+    }
   }
 
   @override
@@ -47,9 +71,11 @@ class _CreatePlaylistScreenState extends State<CreatePlaylistScreen> {
                 });
               },
             ),
+            const SizedBox(height: 12),
+            if (error.isNotEmpty) Text(error, style: const TextStyle(color: Colors.red)),
             ElevatedButton(
-              onPressed: create,
-              child: const Text('Create'),
+              onPressed: loading ? null : create,
+              child: loading ? const SizedBox(width:16,height:16,child:CircularProgressIndicator(strokeWidth:2)) : const Text('Create'),
             ),
           ],
         ),

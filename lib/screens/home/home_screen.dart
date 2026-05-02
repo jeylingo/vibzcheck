@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+
 import '../../services/auth_service.dart';
 import '../auth/login_screen.dart';
+import '../playlists/playlist_list_screen.dart';
 
 class HomeScreen extends StatelessWidget {
-  HomeScreen({super.key}); // ✅ NOT const
+  const HomeScreen({super.key});
 
   Future<void> logout(BuildContext context) async {
     await AuthService().logout();
@@ -22,7 +24,7 @@ class HomeScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Vibzcheck"),
+        title: const Text('Vibzcheck'),
         actions: [
           IconButton(
             onPressed: () => logout(context),
@@ -30,11 +32,32 @@ class HomeScreen extends StatelessWidget {
           ),
         ],
       ),
-      body: Center(
-        child: Text(
-          "Welcome\n${user?.email ?? ""}",
-          textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 22),
+      body: Padding(
+        padding: const EdgeInsets.all(22),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Welcome',
+              style: Theme.of(context).textTheme.headlineSmall,
+            ),
+            const SizedBox(height: 8),
+            Text('Logged in as: ${user?.email ?? ''}'),
+
+            const SizedBox(height: 30),
+
+            ElevatedButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const PlaylistListScreen(),
+                  ),
+                );
+              },
+              child: const Text('Open Playlists'),
+            ),
+          ],
         ),
       ),
     );
