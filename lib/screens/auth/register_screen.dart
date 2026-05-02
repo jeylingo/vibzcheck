@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../services/auth_service.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../home/home_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -36,9 +37,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
         context,
         MaterialPageRoute(builder: (_) => HomeScreen()), // ✅ NO const
       );
+    } on FirebaseAuthException catch (e) {
+      setState(() {
+        error = e.message ?? 'Registration failed';
+      });
     } catch (e) {
       setState(() {
-        error = 'Registration failed';
+        error = 'Registration failed: ${e.toString()}';
       });
     }
 
