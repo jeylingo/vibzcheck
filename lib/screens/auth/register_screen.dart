@@ -13,42 +13,32 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final nameController = TextEditingController();
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
-  final authService = AuthService();
 
   bool loading = false;
   String error = '';
 
   Future<void> register() async {
-    if (nameController.text.trim().isEmpty ||
-        emailController.text.trim().isEmpty ||
-        passwordController.text.trim().isEmpty) {
-      setState(() {
-        error = 'Please fill in all fields.';
-      });
-      return;
-    }
-
     setState(() {
       loading = true;
       error = '';
     });
 
     try {
-      await authService.register(
-        name: nameController.text.trim(),
-        email: emailController.text.trim(),
-        password: passwordController.text.trim(),
+      await AuthService().register(
+        nameController.text.trim(),
+        emailController.text.trim(),
+        passwordController.text.trim(),
       );
 
       if (!mounted) return;
 
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (_) => const HomeScreen()),
+        MaterialPageRoute(builder: (_) => HomeScreen()), // ✅ NO const
       );
     } catch (e) {
       setState(() {
-        error = 'Account creation failed.';
+        error = 'Registration failed';
       });
     }
 
@@ -61,7 +51,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Create Account'),
+        title: const Text("Register"),
       ),
       body: Padding(
         padding: const EdgeInsets.all(24),
@@ -69,18 +59,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
           children: [
             TextField(
               controller: nameController,
-              decoration: const InputDecoration(labelText: 'Name'),
+              decoration: const InputDecoration(labelText: "Name"),
             ),
 
             TextField(
               controller: emailController,
-              decoration: const InputDecoration(labelText: 'Email'),
+              decoration: const InputDecoration(labelText: "Email"),
             ),
 
             TextField(
               controller: passwordController,
               obscureText: true,
-              decoration: const InputDecoration(labelText: 'Password'),
+              decoration: const InputDecoration(labelText: "Password"),
             ),
 
             const SizedBox(height: 20),
@@ -90,7 +80,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
             ElevatedButton(
               onPressed: loading ? null : register,
-              child: Text(loading ? 'Creating...' : 'Register'),
+              child: Text(loading ? "Creating..." : "Register"),
             ),
           ],
         ),

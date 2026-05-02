@@ -13,7 +13,6 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
-  final authService = AuthService();
 
   bool loading = false;
   String error = '';
@@ -25,20 +24,20 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
-      await authService.login(
-        email: emailController.text.trim(),
-        password: passwordController.text.trim(),
+      await AuthService().login(
+        emailController.text.trim(),
+        passwordController.text.trim(),
       );
 
       if (!mounted) return;
 
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (_) => const HomeScreen()),
+        MaterialPageRoute(builder: (_) => HomeScreen()), // ✅ NO const
       );
     } catch (e) {
       setState(() {
-        error = 'Login failed. Check your email and password.';
+        error = 'Login failed';
       });
     }
 
@@ -53,55 +52,46 @@ class _LoginScreenState extends State<LoginScreen> {
       body: Padding(
         padding: const EdgeInsets.all(24),
         child: Center(
-          child: SingleChildScrollView(
-            child: Column(
-              children: [
-                const Text(
-                  'Vibzcheck',
-                  style: TextStyle(fontSize: 38, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                const Text('Collaborative Music App'),
-                const SizedBox(height: 32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text("Vibzcheck", style: TextStyle(fontSize: 32)),
 
-                TextField(
-                  controller: emailController,
-                  decoration: const InputDecoration(labelText: 'Email'),
-                ),
+              const SizedBox(height: 20),
 
-                const SizedBox(height: 12),
+              TextField(
+                controller: emailController,
+                decoration: const InputDecoration(labelText: "Email"),
+              ),
 
-                TextField(
-                  controller: passwordController,
-                  obscureText: true,
-                  decoration: const InputDecoration(labelText: 'Password'),
-                ),
+              TextField(
+                controller: passwordController,
+                obscureText: true,
+                decoration: const InputDecoration(labelText: "Password"),
+              ),
 
-                const SizedBox(height: 20),
+              const SizedBox(height: 20),
 
-                if (error.isNotEmpty)
-                  Text(error, style: const TextStyle(color: Colors.red)),
+              if (error.isNotEmpty)
+                Text(error, style: const TextStyle(color: Colors.red)),
 
-                const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: loading ? null : login,
+                child: Text(loading ? "Loading..." : "Login"),
+              ),
 
-                ElevatedButton(
-                  onPressed: loading ? null : login,
-                  child: Text(loading ? 'Logging in...' : 'Login'),
-                ),
-
-                TextButton(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const RegisterScreen(),
-                      ),
-                    );
-                  },
-                  child: const Text('Create account'),
-                ),
-              ],
-            ),
+              TextButton(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const RegisterScreen(),
+                    ),
+                  );
+                },
+                child: const Text("Create account"),
+              ),
+            ],
           ),
         ),
       ),
