@@ -13,7 +13,6 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
-  final authService = AuthService();
 
   bool loading = false;
   String error = '';
@@ -25,9 +24,9 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
-      await authService.login(
-        email: emailController.text.trim(),
-        password: passwordController.text.trim(),
+      await AuthService().login(
+        emailController.text.trim(),
+        passwordController.text.trim(),
       );
 
       if (!mounted) return;
@@ -58,44 +57,32 @@ class _LoginScreenState extends State<LoginScreen> {
               children: [
                 const Text(
                   'Vibzcheck',
-                  style: TextStyle(fontSize: 38, fontWeight: FontWeight.bold),
+                  style: TextStyle(fontSize: 36, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 8),
                 const Text('Collaborative Music App'),
-                const SizedBox(height: 32),
-
+                const SizedBox(height: 30),
                 TextField(
                   controller: emailController,
                   decoration: const InputDecoration(labelText: 'Email'),
                 ),
-
-                const SizedBox(height: 12),
-
                 TextField(
                   controller: passwordController,
                   obscureText: true,
                   decoration: const InputDecoration(labelText: 'Password'),
                 ),
-
                 const SizedBox(height: 20),
-
                 if (error.isNotEmpty)
                   Text(error, style: const TextStyle(color: Colors.red)),
-
-                const SizedBox(height: 12),
-
                 ElevatedButton(
                   onPressed: loading ? null : login,
-                  child: Text(loading ? 'Logging in...' : 'Login'),
+                  child: Text(loading ? 'Loading...' : 'Login'),
                 ),
-
                 TextButton(
                   onPressed: () {
                     Navigator.push(
                       context,
-                      MaterialPageRoute(
-                        builder: (_) => const RegisterScreen(),
-                      ),
+                      MaterialPageRoute(builder: (_) => const RegisterScreen()),
                     );
                   },
                   child: const Text('Create account'),

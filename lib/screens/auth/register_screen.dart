@@ -13,31 +13,21 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final nameController = TextEditingController();
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
-  final authService = AuthService();
 
   bool loading = false;
   String error = '';
 
   Future<void> register() async {
-    if (nameController.text.trim().isEmpty ||
-        emailController.text.trim().isEmpty ||
-        passwordController.text.trim().isEmpty) {
-      setState(() {
-        error = 'Please fill in all fields.';
-      });
-      return;
-    }
-
     setState(() {
       loading = true;
       error = '';
     });
 
     try {
-      await authService.register(
-        name: nameController.text.trim(),
-        email: emailController.text.trim(),
-        password: passwordController.text.trim(),
+      await AuthService().register(
+        nameController.text.trim(),
+        emailController.text.trim(),
+        passwordController.text.trim(),
       );
 
       if (!mounted) return;
@@ -48,7 +38,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       );
     } catch (e) {
       setState(() {
-        error = 'Account creation failed.';
+        error = 'Registration failed.';
       });
     }
 
@@ -71,23 +61,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
               controller: nameController,
               decoration: const InputDecoration(labelText: 'Name'),
             ),
-
             TextField(
               controller: emailController,
               decoration: const InputDecoration(labelText: 'Email'),
             ),
-
             TextField(
               controller: passwordController,
               obscureText: true,
               decoration: const InputDecoration(labelText: 'Password'),
             ),
-
             const SizedBox(height: 20),
-
             if (error.isNotEmpty)
               Text(error, style: const TextStyle(color: Colors.red)),
-
             ElevatedButton(
               onPressed: loading ? null : register,
               child: Text(loading ? 'Creating...' : 'Register'),
