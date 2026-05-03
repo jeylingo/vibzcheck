@@ -36,7 +36,7 @@ service cloud.firestore {
     }
 
     match /rooms/{roomId} {
-      allow read: if signedIn() && (resource.data.isPrivate == false || isMember(roomId) || isOwner(roomId));
+      allow read: if signedIn();
       allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
       allow update, delete: if isOwner(roomId);
 
@@ -50,7 +50,8 @@ service cloud.firestore {
       match /queue/{songId} {
         allow read: if isMember(roomId) || isOwner(roomId);
         allow create: if (isMember(roomId) || isOwner(roomId)) && (queueUnlocked(roomId) || isOwner(roomId));
-        allow update, delete: if isOwner(roomId);
+        allow update: if isOwner(roomId) || isMember(roomId);
+        allow delete: if isOwner(roomId);
 
         match /votes/{uid} {
           allow read: if isMember(roomId) || isOwner(roomId);
@@ -101,12 +102,12 @@ service cloud.firestore {
         return signedIn() && (playlistDoc().data.ownerId == request.auth.uid || request.auth.uid in playlistDoc().data.members);
       }
 
-      allow read: if canReadPlaylist();
+      allow read: if signedIn() && (resource.data.ownerId == request.auth.uid || request.auth.uid in resource.data.members);
       allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
       allow update, delete: if isPlaylistOwner();
 
       match /songs/{songId} {
-        allow read: if canReadPlaylist();
+        allow read: if signedIn();
         allow create: if signedIn() && (playlistDoc().data.ownerId == request.auth.uid || request.auth.uid in playlistDoc().data.members);
         allow update, delete: if signedIn() && playlistDoc().data.ownerId == request.auth.uid;
 
@@ -115,6 +116,10 @@ service cloud.firestore {
           allow create, update, delete: if signedIn() && uid == request.auth.uid && canReadPlaylist();
         }
       }
+    }
+
+    match /{path=**}/songs/{songId} {
+      allow read: if signedIn();
     }
   }
 }

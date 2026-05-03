@@ -22,8 +22,6 @@ class RecommendationService {
     final historySnap = await db
         .collection('listeningHistory')
         .where('userId', isEqualTo: user.uid)
-        .orderBy('playedAt', descending: true)
-        .limit(200)
         .get();
 
     final songsSnap = await db.collectionGroup('songs').get();

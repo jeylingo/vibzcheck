@@ -25,11 +25,22 @@ class PlaylistListScreen extends StatelessWidget {
       body: StreamBuilder<QuerySnapshot>(
         stream: service.getPlaylists(),
         builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return Center(child: Text('Error: \${snapshot.error}'));
+          }
           if (!snapshot.hasData) {
             return const Center(child: CircularProgressIndicator());
           }
 
-          final playlists = snapshot.data!.docs;
+          final playlists = snapshot.data!.docs.toList();
+          playlists.sort((a, b) {
+            final aData = a.data() as Map<String, dynamic>;
+            final bData = b.data() as Map<String, dynamic>;
+            final aTime = aData['createdAt'] as Timestamp?;
+            final bTime = bData['createdAt'] as Timestamp?;
+            if (aTime == null || bTime == null) return 0;
+            return bTime.compareTo(aTime);
+          });
 
           return ListView.builder(
             itemCount: playlists.length,

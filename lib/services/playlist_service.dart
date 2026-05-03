@@ -18,7 +18,11 @@ class PlaylistService {
   }
 
   Stream<QuerySnapshot> getPlaylists() {
-    return db.collection('playlists').orderBy('createdAt', descending: true).snapshots();
+    final user = auth.currentUser;
+    if (user == null) return const Stream.empty();
+    return db.collection('playlists')
+        .where('members', arrayContains: user.uid)
+        .snapshots();
   }
 
   Future<void> addSong(
