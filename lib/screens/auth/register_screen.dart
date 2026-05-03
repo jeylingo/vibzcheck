@@ -14,9 +14,21 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final nameController = TextEditingController();
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
+  final photoUrlController = TextEditingController();
+  final preferredGenresController = TextEditingController();
 
   bool loading = false;
   String error = '';
+
+  @override
+  void dispose() {
+    nameController.dispose();
+    emailController.dispose();
+    passwordController.dispose();
+    photoUrlController.dispose();
+    preferredGenresController.dispose();
+    super.dispose();
+  }
 
   Future<void> register() async {
     setState(() {
@@ -29,6 +41,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
         nameController.text.trim(),
         emailController.text.trim(),
         passwordController.text.trim(),
+        photoUrl: photoUrlController.text.trim(),
+        preferredGenres: preferredGenresController.text
+            .split(',')
+            .map((g) => g.trim())
+            .where((g) => g.isNotEmpty)
+            .toList(),
       );
 
       if (!mounted) return;
@@ -76,6 +94,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
               controller: passwordController,
               obscureText: true,
               decoration: const InputDecoration(labelText: "Password"),
+            ),
+
+            TextField(
+              controller: photoUrlController,
+              decoration: const InputDecoration(labelText: "Photo URL (optional)"),
+            ),
+
+            TextField(
+              controller: preferredGenresController,
+              decoration: const InputDecoration(labelText: "Preferred genres (comma separated)"),
             ),
 
             const SizedBox(height: 20),

@@ -300,12 +300,7 @@ class _RoomScreenState extends State<RoomScreen> {
             final queueLocked = roomData?['queueLocked'] == true;
             final nowPlaying = roomData?['nowPlaying'] as Map<String, dynamic>?;
 
-            return Row(
-              children: [
-                // Left side: Queue and controls
-                Expanded(
-                  flex: 2,
-                  child: Column(
+            final queuePanel = Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text('Room ID: ${widget.roomId}', style: Theme.of(context).textTheme.bodyMedium),
@@ -433,13 +428,9 @@ class _RoomScreenState extends State<RoomScreen> {
                         ),
                       ),
                     ],
-                  ),
-                ),
-                const SizedBox(width: 12),
-                // Right side: Chat
-                Expanded(
-                  flex: 1,
-                  child: Column(
+                  );
+
+            final chatPanel = Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       const Text('Chat', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
@@ -467,7 +458,11 @@ class _RoomScreenState extends State<RoomScreen> {
                                   alignment: isOwnMessage ? Alignment.centerRight : Alignment.centerLeft,
                                   child: Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                    constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.25),
+                                    constraints: BoxConstraints(
+                                      maxWidth: MediaQuery.of(context).size.width < 700
+                                          ? MediaQuery.of(context).size.width * 0.7
+                                          : MediaQuery.of(context).size.width * 0.25,
+                                    ),
                                     decoration: BoxDecoration(
                                       color: isOwnMessage ? Colors.blue[600] : Colors.grey[600],
                                       borderRadius: BorderRadius.circular(8),
@@ -552,7 +547,35 @@ class _RoomScreenState extends State<RoomScreen> {
                         ),
                       ),
                     ],
+                  );
+
+            final isCompact = MediaQuery.of(context).size.width < 900;
+
+            if (isCompact) {
+              return Column(
+                children: [
+                  Expanded(
+                    child: queuePanel,
                   ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    height: 260,
+                    child: chatPanel,
+                  ),
+                ],
+              );
+            }
+
+            return Row(
+              children: [
+                Expanded(
+                  flex: 2,
+                  child: queuePanel,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 1,
+                  child: chatPanel,
                 ),
               ],
             );
