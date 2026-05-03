@@ -3,10 +3,12 @@ import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'music_metadata_service.dart';
 
 class RoomService {
   final FirebaseFirestore db = FirebaseFirestore.instance;
   final FirebaseAuth auth = FirebaseAuth.instance;
+  final MusicMetadataService metadataService = MusicMetadataService();
 
   Future<T> _withStepTimeout<T>(Future<T> future, String step, {Duration timeout = const Duration(seconds: 10)}) {
     return future.timeout(timeout, onTimeout: () {
@@ -166,6 +168,31 @@ class RoomService {
       'Adding song to room queue',
       timeout: const Duration(seconds: 12),
     );
+
+    // Enrich song metadata asynchronously (fire-and-forget)
+    _enrichSongAsync(roomId, songRef.id, title, artist);
+  }
+
+  /// Enrich song metadata asynchronously
+  Future<void> _enrichSongAsync(String roomId, String songId, String title, String artist) async {
+    try {
+      final metadata = await metadataService.searchTrackMetadata(title: title, artist: artist);
+      if (metadata != null) {
+        final cachedUrl = await metadataService.cacheAlbumArt(
+          roomId: roomId,
+          songId: songId,
+          albumArtUrl: metadata['albumArtUrl'] ?? '',
+        );
+
+        await metadataService.enrichSongInFirestore(
+          roomId: roomId,
+          songId: songId,
+          metadata: metadata,
+          cachedAlbumArtUrl: cachedUrl,
+        );
+      }
+    } catch (e) {
+    }
   }
 
   Future<void> voteOnSong({

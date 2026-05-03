@@ -5,6 +5,7 @@ import 'dart:async';
 
 import '../../services/chat_service.dart';
 import '../../services/room_service.dart';
+import '../../widgets/song_card.dart';
 
 class RoomScreen extends StatefulWidget {
   final String roomId;
@@ -406,55 +407,25 @@ class _RoomScreenState extends State<RoomScreen> {
                                 
                                 final userVote = userVotes[doc.id] ?? 0;
 
-                                return Card(
-                                  child: ListTile(
-                                    dense: true,
-                                    title: Text(title, overflow: TextOverflow.ellipsis),
-                                    subtitle: Text('$artist', overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11)),
-                                    leading: Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: score > 0 ? Colors.green[700] : score < 0 ? Colors.red[700] : Colors.grey[700],
-                                        borderRadius: BorderRadius.circular(4),
-                                      ),
-                                      child: Text(
-                                        score > 0 ? '+$score' : '$score',
-                                        style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 11),
-                                      ),
-                                    ),
-                                    trailing: Wrap(
-                                      spacing: 0,
-                                      children: [
-                                        SizedBox(
-                                          width: 32,
-                                          child: IconButton(
-                                            onPressed: () => _vote(doc.id, 1),
-                                            icon: const Icon(Icons.thumb_up, size: 16),
-                                            color: userVote == 1 ? Colors.green : Colors.grey,
-                                            isSelected: userVote == 1,
-                                          ),
-                                        ),
-                                        SizedBox(
-                                          width: 32,
-                                          child: IconButton(
-                                            onPressed: () => _vote(doc.id, -1),
-                                            icon: const Icon(Icons.thumb_down, size: 16),
-                                            color: userVote == -1 ? Colors.red : Colors.grey,
-                                            isSelected: userVote == -1,
-                                          ),
-                                        ),
-                                        if (isHost)
-                                          SizedBox(
-                                            width: 32,
-                                            child: IconButton(
-                                              onPressed: () => _showHostMenu(doc.id),
-                                              icon: const Icon(Icons.more_vert, size: 16),
-                                              padding: EdgeInsets.zero,
-                                            ),
-                                          ),
-                                      ],
-                                    ),
-                                  ),
+                                final metadata = data['metadata'] as Map<String, dynamic>? ?? {};
+                                final albumArtUrl = metadata['albumArtUrl'] as String?;
+                                final genres = (metadata['genres'] as List?)?.cast<String>() ?? [];
+                                final moods = (metadata['moods'] as List?)?.cast<String>() ?? [];
+                                final popularity = metadata['popularity'] as int?;
+
+                                return SongCard(
+                                  title: title,
+                                  artist: artist,
+                                  voteScore: score,
+                                  userVote: userVote,
+                                  isHost: isHost,
+                                  albumArtUrl: albumArtUrl,
+                                  genres: genres,
+                                  moods: moods,
+                                  popularity: popularity,
+                                  onUpvote: () => _vote(doc.id, 1),
+                                  onDownvote: () => _vote(doc.id, -1),
+                                  onMore: isHost ? () => _showHostMenu(doc.id) : null,
                                 );
                               },
                             );

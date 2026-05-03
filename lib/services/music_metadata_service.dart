@@ -1,0 +1,251 @@
+import 'dart:convert';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:http/http.dart' as http;
+
+class MusicMetadataService {
+  final db = FirebaseFirestore.instance;
+  final storage = FirebaseStorage.instance;
+
+  // Spotify API credentials - replace with your own
+  // Get from: https://developer.spotify.com/dashboard/applications
+  static const String spotifyClientId = 'f5928f1551e54156a1cdf3d463885a04';
+  static const String spotifyClientSecret = 'f4521e249f5446c9adf96520d137a6dc';
+
+  String? _accessToken;
+  DateTime? _tokenExpiry;
+
+  /// Get valid Spotify access token
+  Future<String?> _getSpotifyToken() async {
+    // Return existing token if still valid
+    if (_accessToken != null && _tokenExpiry != null && DateTime.now().isBefore(_tokenExpiry!)) {
+      return _accessToken;
+    }
+
+    if (spotifyClientId == 'YOUR_SPOTIFY_CLIENT_ID') {
+      // Demo mode: Spotify not configured
+      return null;
+    }
+
+    try {
+      final response = await http.post(
+        Uri.parse('https://accounts.spotify.com/api/token'),
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: {
+          'grant_type': 'client_credentials',
+          'client_id': spotifyClientId,
+          'client_secret': spotifyClientSecret,
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final json = jsonDecode(response.body);
+        _accessToken = json['access_token'];
+        _tokenExpiry = DateTime.now().add(Duration(seconds: json['expires_in'] - 60));
+        return _accessToken;
+      }
+    } catch (e) {
+    }
+    return null;
+  }
+
+  /// Search for a track on Spotify and get metadata
+  Future<Map<String, dynamic>?> searchTrackMetadata({
+    required String title,
+    required String artist,
+  }) async {
+    final token = await _getSpotifyToken();
+    if (token == null) return null;
+
+    try {
+      final query = Uri.encodeComponent('$title $artist');
+      final response = await http.get(
+        Uri.parse('https://api.spotify.com/v1/search?q=$query&type=track&limit=1'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+
+      if (response.statusCode == 200) {
+        final json = jsonDecode(response.body);
+        final tracks = json['tracks']['items'] as List?;
+
+        if (tracks != null && tracks.isNotEmpty) {
+          final track = tracks.first;
+          final albumArtUrl = (track['album']['images'] as List?)?.isNotEmpty == true
+              ? track['album']['images'][0]['url']
+              : null;
+
+          final genres = <String>[...(track['album']['genres'] ?? []) as List]
+              .cast<String>()
+              .take(3)
+              .toList();
+
+          return {
+            'spotifyTrackId': track['id'],
+            'spotifyUrl': track['external_urls']['spotify'],
+            'previewUrl': track['preview_url'],
+            'albumArtUrl': albumArtUrl,
+            'albumName': track['album']['name'],
+            'releaseDate': track['album']['release_date'],
+            'genres': genres,
+            'explicit': track['explicit'],
+            'duration': track['duration_ms'],
+            'popularity': track['popularity'],
+            'moods': _inferMoods(genres, track['popularity']),
+          };
+        }
+      }
+    } catch (e) {
+    }
+    return null;
+  }
+
+  /// Cache album art in Firebase Storage
+  Future<String?> cacheAlbumArt({
+    required String roomId,
+    required String songId,
+    required String albumArtUrl,
+  }) async {
+    if (albumArtUrl.isEmpty) return null;
+
+    try {
+      // Check if already cached
+      final ref = storage.ref('albums/$roomId/$songId.jpg');
+      try {
+        await ref.getMetadata();
+        return await ref.getDownloadURL();
+      } catch (e) {
+        // File doesn't exist yet, proceed with upload
+      }
+
+      // Download image and upload to Firebase Storage
+      final imageResponse = await http.get(Uri.parse(albumArtUrl));
+      if (imageResponse.statusCode == 200) {
+        await ref.putData(imageResponse.bodyBytes);
+        return await ref.getDownloadURL();
+      }
+    } catch (e) {
+    }
+    return null;
+  }
+
+  /// Store enriched song metadata in Firestore
+  Future<void> enrichSongInFirestore({
+    required String roomId,
+    required String songId,
+    required Map<String, dynamic> metadata,
+    String? cachedAlbumArtUrl,
+  }) async {
+    try {
+      await db
+          .collection('rooms')
+          .doc(roomId)
+          .collection('queue')
+          .doc(songId)
+          .update({
+        'metadata': {
+          'spotifyTrackId': metadata['spotifyTrackId'],
+          'spotifyUrl': metadata['spotifyUrl'],
+          'previewUrl': metadata['previewUrl'],
+          'albumName': metadata['albumName'],
+          'releaseDate': metadata['releaseDate'],
+          'genres': metadata['genres'],
+          'moods': metadata['moods'],
+          'explicit': metadata['explicit'],
+          'duration': metadata['duration'],
+          'popularity': metadata['popularity'],
+          'albumArtUrl': cachedAlbumArtUrl ?? metadata['albumArtUrl'],
+          'enrichedAt': FieldValue.serverTimestamp(),
+        },
+      });
+    } catch (e) {
+    }
+  }
+
+  /// Infer moods from genres and popularity
+  List<String> _inferMoods(List<String> genres, int popularity) {
+    final moods = <String>[];
+
+    // Genre-based mood mapping
+    final genreMoodMap = {
+      'energy': ['edm', 'dance', 'electronic', 'rock', 'metal', 'punk'],
+      'relaxed': ['ambient', 'chillhop', 'lo-fi', 'reggae', 'chill'],
+      'melancholic': ['sad', 'blues', 'slow', 'ballad', 'emotional'],
+      'joyful': ['pop', 'dance', 'funk', 'disco', 'house'],
+      'focus': ['ambient', 'electronic', 'lo-fi', 'instrumental', 'classical'],
+      'party': ['edm', 'dance', 'house', 'techno', 'hip-hop', 'trap'],
+      'workout': ['hip-hop', 'rock', 'metal', 'edm', 'electronic'],
+      'romantic': ['soul', 'r&b', 'pop', 'ballad', 'indie'],
+    };
+
+    for (final entry in genreMoodMap.entries) {
+      final mood = entry.key;
+      final keywords = entry.value;
+      if (genres.any((g) => keywords.any((k) => g.toLowerCase().contains(k)))) {
+        moods.add(mood);
+      }
+    }
+
+    // Popularity-based adjustments
+    if (popularity > 75) moods.add('trending');
+    if (popularity < 30) moods.add('underground');
+
+    // Return unique moods, max 5
+    return moods.toSet().toList().take(5).toList();
+  }
+
+  /// Get all enriched songs in a room queue
+  Future<List<Map<String, dynamic>>> getEnrichedQueue(String roomId) async {
+    try {
+      final snapshot = await db
+          .collection('rooms')
+          .doc(roomId)
+          .collection('queue')
+          .orderBy('position')
+          .orderBy('voteScore', descending: true)
+          .get();
+
+      return snapshot.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
+    } catch (e) {
+      return [];
+    }
+  }
+
+  /// Batch enrich multiple songs
+  Future<void> batchEnrichSongs({
+    required String roomId,
+    required List<Map<String, dynamic>> songs,
+  }) async {
+    for (final song in songs) {
+      final title = song['title'] as String?;
+      final artist = song['artist'] as String?;
+      final songId = song['id'] as String?;
+
+      if (title == null || artist == null || songId == null) continue;
+
+      // Skip if already enriched
+      if (song['metadata'] != null) continue;
+
+      try {
+        final metadata = await searchTrackMetadata(title: title, artist: artist);
+        if (metadata != null) {
+          final cachedUrl = await cacheAlbumArt(
+            roomId: roomId,
+            songId: songId,
+            albumArtUrl: metadata['albumArtUrl'] ?? '',
+          );
+
+          await enrichSongInFirestore(
+            roomId: roomId,
+            songId: songId,
+            metadata: metadata,
+            cachedAlbumArtUrl: cachedUrl,
+          );
+        }
+      } catch (e) {
+      }
+
+      // Rate limiting - Spotify API limits
+      await Future.delayed(const Duration(milliseconds: 200));
+    }
+  }
+}
