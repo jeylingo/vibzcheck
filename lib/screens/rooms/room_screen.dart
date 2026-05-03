@@ -2,9 +2,13 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'dart:async';
+import 'package:provider/provider.dart';
 
+import '../../providers/theme_provider.dart';
 import '../../services/chat_service.dart';
 import '../../services/room_service.dart';
+import '../../services/playback_service.dart';
+import '../../services/music_metadata_service.dart';
 import '../../widgets/song_card.dart';
 
 class RoomScreen extends StatefulWidget {
@@ -34,11 +38,17 @@ class _RoomScreenState extends State<RoomScreen> {
   User? get currentUser => FirebaseAuth.instance.currentUser;
 
   @override
+  void initState() {
+    super.initState();
+    PlaybackService().joinRoom(widget.roomId);
+  }
+
+  @override
   void dispose() {
     messageController.dispose();
     typingTimer?.cancel();
-    // Clear typing status when leaving
     chatService.clearTyping(widget.roomId);
+    PlaybackService().leaveRoom();
     super.dispose();
   }
 
@@ -69,79 +79,9 @@ class _RoomScreenState extends State<RoomScreen> {
   }
 
   Future<void> _showAddSongDialog() async {
-    final titleController = TextEditingController();
-    final artistController = TextEditingController();
-    final genreController = TextEditingController();
-    final moodsController = TextEditingController();
-
-    await showDialog<void>(
+    await showDialog(
       context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('Add Song'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(controller: titleController, decoration: const InputDecoration(labelText: 'Title')),
-                TextField(controller: artistController, decoration: const InputDecoration(labelText: 'Artist')),
-                TextField(controller: genreController, decoration: const InputDecoration(labelText: 'Genre')),
-                TextField(controller: moodsController, decoration: const InputDecoration(labelText: 'Moods (comma separated)')),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                final title = titleController.text.trim();
-                final artist = artistController.text.trim();
-                final genre = genreController.text.trim();
-                final moods = moodsController.text
-                    .split(',')
-                    .map((value) => value.trim())
-                    .where((value) => value.isNotEmpty)
-                    .toList();
-
-                if (title.isEmpty || artist.isEmpty || genre.isEmpty) {
-                  if (mounted) {
-                    setState(() => error = 'Title, artist, and genre are required.');
-                  }
-                  return;
-                }
-
-                Navigator.pop(dialogContext);
-                setState(() {
-                  addingSong = true;
-                  error = '';
-                });
-
-                try {
-                  await service.addSongToQueue(
-                    roomId: widget.roomId,
-                    title: title,
-                    artist: artist,
-                    genre: genre,
-                    moods: moods,
-                  );
-                } catch (e) {
-                  if (mounted) {
-                    setState(() => error = e.toString());
-                  }
-                } finally {
-                  if (mounted) {
-                    setState(() => addingSong = false);
-                  }
-                }
-              },
-              child: const Text('Add'),
-            ),
-          ],
-        );
-      },
+      builder: (context) => SpotifySearchDialog(roomId: widget.roomId),
     );
   }
 
@@ -229,6 +169,13 @@ class _RoomScreenState extends State<RoomScreen> {
     typingTimer?.cancel();
 
     try {
+      final roomSnap = await service.db.collection('rooms').doc(widget.roomId).get();
+      final mutedUsers = List<String>.from(roomSnap.data()?['mutedUsers'] ?? const <String>[]);
+      if (mutedUsers.contains(currentUser?.uid)) {
+        if (mounted) setState(() => error = 'You have been muted by the host.');
+        return;
+      }
+
       await chatService.sendMessage(
         roomId: widget.roomId,
         content: content,
@@ -290,6 +237,51 @@ class _RoomScreenState extends State<RoomScreen> {
           ),
         ],
       ),
+      endDrawer: Drawer(
+        child: ListView(
+          padding: EdgeInsets.zero,
+          children: [
+            const DrawerHeader(
+              decoration: BoxDecoration(color: Colors.blue),
+              child: Text('Room Settings', style: TextStyle(color: Colors.white, fontSize: 24)),
+            ),
+            Consumer<ThemeProvider>(
+              builder: (context, themeProvider, child) {
+                return SwitchListTile(
+                  title: const Text('Dark Theme'),
+                  value: themeProvider.isDarkMode,
+                  onChanged: (val) => themeProvider.toggleTheme(),
+                );
+              },
+            ),
+            StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+              stream: roomStateStream,
+              builder: (context, snapshot) {
+                final roomData = snapshot.data?.data();
+                final isHost = roomData != null && currentUser != null && roomData['ownerId'] == currentUser!.uid;
+                final autoDjEnabled = roomData?['autoDjEnabled'] == true;
+
+                if (!isHost) return const SizedBox.shrink();
+
+                return SwitchListTile(
+                  title: const Text('Auto-DJ'),
+                  subtitle: const Text('Automatically play recommended songs when queue is empty'),
+                  value: autoDjEnabled,
+                  onChanged: (val) => service.updateRoomSettings(widget.roomId, {'autoDjEnabled': val}),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.exit_to_app, color: Colors.red),
+              title: const Text('Leave Room', style: TextStyle(color: Colors.red)),
+              onTap: () async {
+                await service.leaveRoom(widget.roomId);
+                if (mounted) Navigator.popUntil(context, (route) => route.isFirst);
+              },
+            ),
+          ],
+        ),
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
@@ -299,6 +291,9 @@ class _RoomScreenState extends State<RoomScreen> {
             final isHost = roomData != null && currentUser != null && roomData['ownerId'] == currentUser!.uid;
             final queueLocked = roomData?['queueLocked'] == true;
             final nowPlaying = roomData?['nowPlaying'] as Map<String, dynamic>?;
+            final playbackState = roomData?['playbackState'] as Map<String, dynamic>?;
+            final isPlaying = playbackState?['isPlaying'] == true;
+            final mutedUsers = List<String>.from(roomData?['mutedUsers'] ?? const <String>[]);
 
             final queuePanel = Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -316,15 +311,24 @@ class _RoomScreenState extends State<RoomScreen> {
                           subtitle: nowPlaying == null
                               ? const Text('Nothing is playing yet')
                               : Text('${nowPlaying['title'] ?? ''} • ${nowPlaying['artist'] ?? ''}', overflow: TextOverflow.ellipsis),
-                          trailing: isHost
-                              ? Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(queueLocked ? 'Locked' : 'Open', style: const TextStyle(fontSize: 12)),
-                                    Switch(value: queueLocked, onChanged: _toggleLock),
-                                  ],
-                                )
-                              : Text(queueLocked ? 'Locked by host' : 'Open', style: const TextStyle(fontSize: 12)),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (nowPlaying != null && isHost)
+                                IconButton(
+                                  icon: Icon(isPlaying ? Icons.pause : Icons.play_arrow),
+                                  onPressed: () => PlaybackService().togglePlayPause(),
+                                ),
+                              if (nowPlaying != null && !isHost)
+                                Icon(isPlaying ? Icons.volume_up : Icons.volume_off, size: 16),
+                              const SizedBox(width: 8),
+                              if (isHost) ...[
+                                Text(queueLocked ? 'Locked' : 'Open', style: const TextStyle(fontSize: 12)),
+                                Switch(value: queueLocked, onChanged: _toggleLock),
+                              ] else
+                                Text(queueLocked ? 'Locked by host' : 'Open', style: const TextStyle(fontSize: 12)),
+                            ],
+                          ),
                         ),
                       ),
                       const SizedBox(height: 12),
@@ -360,6 +364,7 @@ class _RoomScreenState extends State<RoomScreen> {
                         child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
                           stream: membersStream,
                           builder: (context, snapshot) {
+                            if (snapshot.hasError) return Center(child: Text('Error: ${snapshot.error}', style: const TextStyle(color: Colors.red)));
                             if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
                             final docs = snapshot.data!.docs;
                             if (docs.isEmpty) return const Center(child: Text('No members yet'));
@@ -369,7 +374,20 @@ class _RoomScreenState extends State<RoomScreen> {
                               separatorBuilder: (context, index) => const SizedBox(width: 8),
                               itemBuilder: (context, index) {
                                 final data = docs[index].data();
-                                return Chip(label: Text(data['displayName'] ?? data['uid'] ?? 'Member'));
+                                final uid = data['uid'] as String?;
+                                final isUserMuted = mutedUsers.contains(uid);
+
+                                return GestureDetector(
+                                  onLongPress: () {
+                                    if (isHost && uid != null && uid != currentUser?.uid) {
+                                      service.muteUser(widget.roomId, uid, !isUserMuted);
+                                    }
+                                  },
+                                  child: Chip(
+                                    label: Text(data['displayName'] ?? uid ?? 'Member'),
+                                    avatar: isUserMuted ? const Icon(Icons.volume_off, size: 16) : null,
+                                  ),
+                                );
                               },
                             );
                           },
@@ -381,8 +399,17 @@ class _RoomScreenState extends State<RoomScreen> {
                         child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
                           stream: queueStream,
                           builder: (context, snapshot) {
+                            if (snapshot.hasError) return Center(child: Text('Error: ${snapshot.error}', style: const TextStyle(color: Colors.red)));
                             if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-                            final docs = snapshot.data!.docs;
+                            final docs = snapshot.data!.docs.toList();
+                            docs.sort((a, b) {
+                              final scoreA = a.data()['voteScore'] ?? 0;
+                              final scoreB = b.data()['voteScore'] ?? 0;
+                              if (scoreA != scoreB) return scoreB.compareTo(scoreA);
+                              final posA = a.data()['position'] ?? 0;
+                              final posB = b.data()['position'] ?? 0;
+                              return posA.compareTo(posB);
+                            });
                             if (docs.isEmpty) return const Center(child: Text('Queue is empty'));
                             return ListView.separated(
                               itemCount: docs.length,
@@ -456,37 +483,55 @@ class _RoomScreenState extends State<RoomScreen> {
 
                                 return Align(
                                   alignment: isOwnMessage ? Alignment.centerRight : Alignment.centerLeft,
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                    constraints: BoxConstraints(
-                                      maxWidth: MediaQuery.of(context).size.width < 700
-                                          ? MediaQuery.of(context).size.width * 0.7
-                                          : MediaQuery.of(context).size.width * 0.25,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: isOwnMessage ? Colors.blue[600] : Colors.grey[600],
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    child: Column(
-                                      crossAxisAlignment: isOwnMessage ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Text(
-                                          displayName,
-                                          style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white),
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                        Text(
-                                          content,
-                                          style: const TextStyle(fontSize: 11, color: Colors.white),
-                                          maxLines: 3,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                        Text(
-                                          _formatTimestamp(timestamp),
-                                          style: const TextStyle(fontSize: 8, color: Colors.white70),
-                                        ),
-                                      ],
+                                  child: GestureDetector(
+                                    onLongPress: () {
+                                      final uid = msg['userId'] as String?;
+                                      if (isHost && uid != null && uid != currentUser?.uid) {
+                                        final isUserMuted = mutedUsers.contains(uid);
+                                        service.muteUser(widget.roomId, uid, !isUserMuted);
+                                      }
+                                    },
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                      constraints: BoxConstraints(
+                                        maxWidth: MediaQuery.of(context).size.width < 700
+                                            ? MediaQuery.of(context).size.width * 0.7
+                                            : MediaQuery.of(context).size.width * 0.25,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: isOwnMessage ? Colors.blue[600] : Colors.grey[600],
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: Column(
+                                        crossAxisAlignment: isOwnMessage ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Text(
+                                                displayName,
+                                                style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white),
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                              if (mutedUsers.contains(msg['userId'])) ...[
+                                                const SizedBox(width: 4),
+                                                const Icon(Icons.volume_off, size: 10, color: Colors.white70),
+                                              ],
+                                            ],
+                                          ),
+                                          Text(
+                                            content,
+                                            style: const TextStyle(fontSize: 11, color: Colors.white),
+                                            maxLines: 3,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                          Text(
+                                            _formatTimestamp(timestamp),
+                                            style: const TextStyle(fontSize: 8, color: Colors.white70),
+                                          ),
+                                        ],
+                                      ),
                                     ),
                                   ),
                                 );
@@ -580,6 +625,121 @@ class _RoomScreenState extends State<RoomScreen> {
               ],
             );
           },
+        ),
+      ),
+    );
+  }
+}
+
+class SpotifySearchDialog extends StatefulWidget {
+  final String roomId;
+  const SpotifySearchDialog({super.key, required this.roomId});
+
+  @override
+  State<SpotifySearchDialog> createState() => _SpotifySearchDialogState();
+}
+
+class _SpotifySearchDialogState extends State<SpotifySearchDialog> {
+  final _searchController = TextEditingController();
+  List<Map<String, dynamic>> _results = [];
+  bool _isSearching = false;
+  bool _isAdding = false;
+  String _error = '';
+
+  Future<void> _search(String query) async {
+    if (query.trim().isEmpty) {
+      setState(() => _results = []);
+      return;
+    }
+    setState(() {
+      _isSearching = true;
+      _error = '';
+    });
+    try {
+      final res = await MusicMetadataService().searchSpotifyTracks(query);
+      if (mounted) setState(() => _results = res);
+    } catch (e) {
+      if (mounted) setState(() => _error = 'Search failed');
+    } finally {
+      if (mounted) setState(() => _isSearching = false);
+    }
+  }
+
+  Future<void> _addSong(Map<String, dynamic> track) async {
+    setState(() {
+      _isAdding = true;
+      _error = '';
+    });
+    try {
+      final genres = (track['genres'] as List?)?.cast<String>() ?? [];
+      final genre = genres.isNotEmpty ? genres.first : 'pop';
+      final moods = (track['moods'] as List?)?.cast<String>() ?? [];
+
+      await RoomService().addSongToQueue(
+        roomId: widget.roomId,
+        title: track['title'],
+        artist: track['artist'],
+        genre: genre,
+        moods: moods,
+        exactMetadata: track,
+      );
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _isAdding = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Container(
+        width: 400,
+        height: 600,
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            const Text('Search Music', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                hintText: 'Song, Artist...',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.send),
+                  onPressed: () => _search(_searchController.text),
+                ),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              onSubmitted: _search,
+            ),
+            const SizedBox(height: 8),
+            if (_error.isNotEmpty) Text(_error, style: const TextStyle(color: Colors.red)),
+            if (_isSearching || _isAdding) const Padding(padding: EdgeInsets.all(8.0), child: CircularProgressIndicator()),
+            Expanded(
+              child: ListView.builder(
+                itemCount: _results.length,
+                itemBuilder: (context, index) {
+                  final track = _results[index];
+                  return ListTile(
+                    leading: track['albumArtUrl'] != null
+                        ? Image.network(track['albumArtUrl'], width: 40, height: 40, fit: BoxFit.cover)
+                        : const Icon(Icons.music_note, size: 40),
+                    title: Text(track['title'] ?? '', maxLines: 1, overflow: TextOverflow.ellipsis),
+                    subtitle: Text(track['artist'] ?? '', maxLines: 1, overflow: TextOverflow.ellipsis),
+                    onTap: () => _addSong(track),
+                  );
+                },
+              ),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+          ],
         ),
       ),
     );

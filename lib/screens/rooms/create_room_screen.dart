@@ -1,4 +1,6 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../services/room_service.dart';
 import 'room_screen.dart';
 
@@ -14,6 +16,17 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
   bool isPrivate = false;
   bool loading = false;
   String error = '';
+  File? _coverImage;
+
+  Future<void> _pickImage() async {
+    final picker = ImagePicker();
+    final pickedFile = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
+    if (pickedFile != null) {
+      setState(() {
+        _coverImage = File(pickedFile.path);
+      });
+    }
+  }
 
   Future<void> create() async {
     final title = titleController.text.trim();
@@ -30,7 +43,7 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
     });
 
     try {
-      final res = await RoomService().createRoom(title, isPrivate: isPrivate);
+      final res = await RoomService().createRoom(title, isPrivate: isPrivate, coverImage: _coverImage);
       if (!mounted) return;
       Navigator.pushReplacement(
         context,
@@ -49,10 +62,24 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Create Room')),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(22),
         child: Column(
           children: [
+            GestureDetector(
+              onTap: _pickImage,
+              child: Container(
+                width: 120,
+                height: 120,
+                decoration: BoxDecoration(
+                  color: Colors.grey[800],
+                  borderRadius: BorderRadius.circular(12),
+                  image: _coverImage != null ? DecorationImage(image: FileImage(_coverImage!), fit: BoxFit.cover) : null,
+                ),
+                child: _coverImage == null ? const Icon(Icons.add_a_photo, size: 40, color: Colors.white54) : null,
+              ),
+            ),
+            const SizedBox(height: 16),
             TextField(controller: titleController, decoration: const InputDecoration(labelText: 'Room title')),
             Row(
               children: [

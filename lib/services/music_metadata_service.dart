@@ -43,8 +43,11 @@ class MusicMetadataService {
         _accessToken = json['access_token'];
         _tokenExpiry = DateTime.now().add(Duration(seconds: json['expires_in'] - 60));
         return _accessToken;
+      } else {
+        print('Spotify token error: ${response.statusCode} - ${response.body}');
       }
     } catch (e) {
+      print('Spotify exception: $e');
     }
     return null;
   }
@@ -95,8 +98,53 @@ class MusicMetadataService {
         }
       }
     } catch (e) {
+      print('Spotify search error: $e');
     }
     return null;
+  }
+
+  /// Search for multiple tracks (using iTunes API to avoid Spotify Premium requirements)
+  Future<List<Map<String, dynamic>>> searchSpotifyTracks(String query) async {
+    if (query.trim().isEmpty) return [];
+
+    try {
+      final encodedQuery = Uri.encodeComponent(query);
+      final response = await http.get(
+        Uri.parse('https://itunes.apple.com/search?term=$encodedQuery&entity=song&limit=15'),
+      );
+
+      if (response.statusCode == 200) {
+        final json = jsonDecode(response.body);
+        final results = json['results'] as List?;
+        
+        if (results == null) return [];
+
+        return results.map((track) {
+          final albumArtUrl = (track['artworkUrl100'] as String?)?.replaceAll('100x100bb', '600x600bb');
+          
+          return {
+            'spotifyTrackId': track['trackId']?.toString() ?? '',
+            'title': track['trackName'] ?? 'Unknown',
+            'artist': track['artistName'] ?? 'Unknown',
+            'spotifyUrl': track['trackViewUrl'],
+            'previewUrl': track['previewUrl'],
+            'albumArtUrl': albumArtUrl ?? track['artworkUrl100'],
+            'albumName': track['collectionName'],
+            'releaseDate': track['releaseDate'],
+            'genres': [track['primaryGenreName'] ?? 'Pop'],
+            'explicit': track['trackExplicitness'] == 'explicit',
+            'duration': track['trackTimeMillis'],
+            'popularity': 50,
+            'moods': _inferMoods([track['primaryGenreName'] ?? 'Pop'], 50),
+          };
+        }).toList();
+      } else {
+        print('iTunes API error: ${response.statusCode} - ${response.body}');
+      }
+    } catch (e) {
+      print('iTunes UI search error: $e');
+    }
+    return [];
   }
 
   /// Cache album art in Firebase Storage
@@ -200,11 +248,19 @@ class MusicMetadataService {
           .collection('rooms')
           .doc(roomId)
           .collection('queue')
-          .orderBy('position')
-          .orderBy('voteScore', descending: true)
           .get();
 
-      return snapshot.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
+      final docs = snapshot.docs;
+      docs.sort((a, b) {
+        final scoreA = a.data()['voteScore'] ?? 0;
+        final scoreB = b.data()['voteScore'] ?? 0;
+        if (scoreA != scoreB) return scoreB.compareTo(scoreA);
+        final posA = a.data()['position'] ?? 0;
+        final posB = b.data()['position'] ?? 0;
+        return posA.compareTo(posB);
+      });
+
+      return docs.map((doc) => {'id': doc.id, ...doc.data()}).toList();
     } catch (e) {
       return [];
     }

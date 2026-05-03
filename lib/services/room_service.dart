@@ -1,10 +1,14 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'music_metadata_service.dart';
 import 'notification_service.dart';
+import 'recommendation_service.dart';
+import 'storage_service.dart';
+import 'recommendation_service.dart';
 
 class RoomService {
   final FirebaseFirestore db = FirebaseFirestore.instance;
@@ -41,7 +45,7 @@ class RoomService {
     return memberSnap.exists;
   }
 
-  Future<Map<String, String>> createRoom(String title, {bool isPrivate = false}) async {
+  Future<Map<String, String>> createRoom(String title, {bool isPrivate = false, File? coverImage}) async {
     final user = auth.currentUser!;
 
     // Generate a short room code without querying Firestore first.
@@ -51,12 +55,18 @@ class RoomService {
     final roomRef = db.collection('rooms').doc();
     final memberRef = roomRef.collection('members').doc(user.uid);
 
+    String? coverUrl;
+    if (coverImage != null) {
+      coverUrl = await StorageService().uploadRoomCover(roomRef.id, coverImage);
+    }
+
     final batch = db.batch();
     batch.set(roomRef, {
       'title': title,
       'ownerId': user.uid,
       'code': code,
       'isPrivate': isPrivate,
+      'coverUrl': coverUrl,
       'queueLocked': false,
       'nowPlaying': null,
       'createdAt': FieldValue.serverTimestamp(),
@@ -111,6 +121,32 @@ class RoomService {
     return roomId;
   }
 
+  Future<void> leaveRoom(String roomId) async {
+    final user = auth.currentUser!;
+    final memberRef = db.collection('rooms').doc(roomId).collection('members').doc(user.uid);
+    await memberRef.delete();
+    await notificationService.unsubscribeFromRoomTopic(roomId);
+  }
+
+  Future<void> updateRoomSettings(String roomId, Map<String, dynamic> settings) async {
+    if (!await _isHost(roomId)) throw Exception('Only the host can update settings.');
+    await db.collection('rooms').doc(roomId).update(settings);
+  }
+
+  Future<void> muteUser(String roomId, String userId, bool mute) async {
+    if (!await _isHost(roomId)) throw Exception('Only the host can mute users.');
+    final roomRef = db.collection('rooms').doc(roomId);
+    if (mute) {
+      await roomRef.update({
+        'mutedUsers': FieldValue.arrayUnion([userId])
+      });
+    } else {
+      await roomRef.update({
+        'mutedUsers': FieldValue.arrayRemove([userId])
+      });
+    }
+  }
+
   Future<List<String>> _memberUserIds(String roomId) async {
     final members = await db.collection('rooms').doc(roomId).collection('members').get();
     return members.docs.map((d) => (d.data()['uid'] ?? '').toString()).where((uid) => uid.isNotEmpty).toList();
@@ -137,7 +173,7 @@ class RoomService {
   }
 
   Stream<QuerySnapshot<Map<String, dynamic>>> watchRoomQueue(String roomId) {
-    return db.collection('rooms').doc(roomId).collection('queue').orderBy('position').orderBy('voteScore', descending: true).snapshots();
+    return db.collection('rooms').doc(roomId).collection('queue').snapshots();
   }
 
   Stream<QuerySnapshot<Map<String, dynamic>>> watchRoomMembers(String roomId) {
@@ -158,6 +194,7 @@ class RoomService {
     required String artist,
     required String genre,
     List<String> moods = const [],
+    Map<String, dynamic>? exactMetadata,
   }) async {
     final user = auth.currentUser!;
 
@@ -190,6 +227,7 @@ class RoomService {
       'addedBy': user.uid,
       'voteScore': 0,
       'position': nextPosition,
+      'metadata': exactMetadata,
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
@@ -215,8 +253,25 @@ class RoomService {
       },
     );
 
-    // Enrich song metadata asynchronously (fire-and-forget)
-    _enrichSongAsync(roomId, songRef.id, title, artist);
+    // Fetch Spotify metadata asynchronously so it doesn't block adding to queue
+    unawaited(Future(() async {
+      try {
+        final metadata = await metadataService.searchTrackMetadata(title: title, artist: artist);
+        if (metadata != null) {
+          final cachedUrl = await metadataService.cacheAlbumArt(
+            roomId: roomId,
+            songId: songRef.id,
+            albumArtUrl: metadata['albumArtUrl'] ?? '',
+          );
+          await metadataService.enrichSongInFirestore(
+            roomId: roomId,
+            songId: songRef.id,
+            metadata: metadata,
+            cachedAlbumArtUrl: cachedUrl,
+          );
+        }
+      } catch (_) {}
+    }));
   }
 
   /// Enrich song metadata asynchronously
@@ -384,15 +439,45 @@ class RoomService {
         final roomData = roomSnap.data();
         final currentNowPlaying = roomData?['nowPlaying'] as Map<String, dynamic>?;
 
-        final nextSnap = await queueRef.orderBy('position').orderBy('voteScore', descending: true).limit(2).get();
-        if (nextSnap.docs.isEmpty) {
+        final nextSnap = await queueRef.get();
+        final docs = nextSnap.docs.toList();
+        docs.sort((a, b) {
+          final scoreA = a.data()['voteScore'] ?? 0;
+          final scoreB = b.data()['voteScore'] ?? 0;
+          if (scoreA != scoreB) return scoreB.compareTo(scoreA);
+          final posA = a.data()['position'] ?? 0;
+          final posB = b.data()['position'] ?? 0;
+          return posA.compareTo(posB);
+        });
+
+        if (docs.isEmpty) {
+          if (roomData?['autoDjEnabled'] == true) {
+            // Auto-DJ: add a recommendation
+            final recs = await RecommendationService().getRecommendations();
+            if (recs.isNotEmpty) {
+              final rec = recs.first;
+              final autoDjBatch = db.batch();
+              autoDjBatch.set(roomRef, {
+                ...(roomData ?? {}),
+                'nowPlaying': {
+                  'title': rec['title'],
+                  'artist': rec['artist'],
+                  'metadata': rec['metadata'], // if any
+                  'songId': 'autodj_${DateTime.now().millisecondsSinceEpoch}',
+                  'startedAt': FieldValue.serverTimestamp(),
+                },
+              }, SetOptions(merge: true));
+              await autoDjBatch.commit();
+              return;
+            }
+          }
           await roomRef.set({'nowPlaying': null}, SetOptions(merge: true));
           return;
         }
 
-        final nextDoc = nextSnap.docs.first;
+        final nextDoc = docs.first;
         final nextData = nextDoc.data();
-        final onDeck = nextSnap.docs.length > 1 ? nextSnap.docs[1].data() : null;
+        final onDeck = docs.length > 1 ? docs[1].data() : null;
         final batch = db.batch();
 
         if (currentNowPlaying != null) {

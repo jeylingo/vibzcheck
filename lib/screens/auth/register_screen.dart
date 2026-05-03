@@ -1,4 +1,6 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../services/auth_service.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'registration_success_screen.dart';
@@ -19,6 +21,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   bool loading = false;
   String error = '';
+  File? _profileImage;
+
+  Future<void> _pickImage() async {
+    final picker = ImagePicker();
+    final pickedFile = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
+    if (pickedFile != null) {
+      setState(() {
+        _profileImage = File(pickedFile.path);
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -41,6 +54,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         nameController.text.trim(),
         emailController.text.trim(),
         passwordController.text.trim(),
+        profileImage: _profileImage,
         photoUrl: photoUrlController.text.trim(),
         preferredGenres: preferredGenresController.text
             .split(',')
@@ -76,10 +90,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
       appBar: AppBar(
         title: const Text("Register"),
       ),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
           children: [
+            GestureDetector(
+              onTap: _pickImage,
+              child: CircleAvatar(
+                radius: 50,
+                backgroundColor: Colors.grey[800],
+                backgroundImage: _profileImage != null ? FileImage(_profileImage!) : null,
+                child: _profileImage == null ? const Icon(Icons.add_a_photo, size: 40, color: Colors.white54) : null,
+              ),
+            ),
+            const SizedBox(height: 16),
             TextField(
               controller: nameController,
               decoration: const InputDecoration(labelText: "Name"),

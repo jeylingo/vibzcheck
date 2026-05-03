@@ -24,7 +24,7 @@ class NotificationService {
       const AndroidInitializationSettings androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
       const DarwinInitializationSettings iosSettings = DarwinInitializationSettings();
       const InitializationSettings initSettings = InitializationSettings(android: androidSettings, iOS: iosSettings);
-      await _localNotifications.initialize(initSettings);
+      await _localNotifications.initialize(settings: initSettings);
 
       final token = await messaging.getToken();
       if (token != null) {
@@ -42,10 +42,10 @@ class NotificationService {
         final notification = message.notification;
         if (notification != null) {
           _localNotifications.show(
-            notification.hashCode,
-            notification.title,
-            notification.body,
-            const NotificationDetails(
+            id: notification.hashCode,
+            title: notification.title,
+            body: notification.body,
+            notificationDetails: const NotificationDetails(
               android: AndroidNotificationDetails(
                 'vibzcheck_channel',
                 'Vibzcheck Notifications',

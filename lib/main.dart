@@ -5,6 +5,9 @@ import 'firebase_options.dart';
 import 'screens/auth/login_screen.dart';
 import 'services/notification_service.dart';
 
+import 'package:provider/provider.dart';
+import 'providers/theme_provider.dart';
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -12,15 +15,20 @@ Future<void> main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  // Keep App Check out of debug builds so local auth works even when the
-  // Firebase App Check API is not enabled for this project.
   if (kReleaseMode) {
-    // App Check can be enabled here later with production providers.
+    // App Check can be enabled here later
   }
 
   await NotificationService().initNotifications();
 
-  runApp(const VibzcheckApp());
+  runApp(
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => ThemeProvider()),
+      ],
+      child: const VibzcheckApp(),
+    ),
+  );
 }
 
 class VibzcheckApp extends StatelessWidget {
@@ -28,11 +36,17 @@ class VibzcheckApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Vibzcheck',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark(),
-      home: const LoginScreen(),
+    return Consumer<ThemeProvider>(
+      builder: (context, themeProvider, child) {
+        return MaterialApp(
+          title: 'Vibzcheck',
+          debugShowCheckedModeBanner: false,
+          themeMode: themeProvider.themeMode,
+          theme: ThemeData.light(),
+          darkTheme: ThemeData.dark(),
+          home: const LoginScreen(),
+        );
+      },
     );
   }
 }

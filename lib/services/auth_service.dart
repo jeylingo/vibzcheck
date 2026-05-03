@@ -1,6 +1,8 @@
+import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'notification_service.dart';
+import 'storage_service.dart';
 
 class AuthService {
   final FirebaseAuth auth = FirebaseAuth.instance;
@@ -12,6 +14,7 @@ class AuthService {
     String name,
     String email,
     String password, {
+    File? profileImage,
     String photoUrl = '',
     List<String> preferredGenres = const [],
   }) async {
@@ -24,6 +27,11 @@ class AuthService {
             onTimeout: () =>
                 throw Exception('Sign-up took too long. Check your connection.'));
 
+    String finalPhotoUrl = photoUrl;
+    if (profileImage != null) {
+      finalPhotoUrl = await StorageService().uploadProfilePicture(userCredential.user!.uid, profileImage);
+    }
+
     final normalizedGenres = preferredGenres
         .map((g) => g.trim().toLowerCase())
         .where((g) => g.isNotEmpty)
@@ -34,7 +42,7 @@ class AuthService {
       'uid': userCredential.user!.uid,
       'name': name,
       'email': email,
-      'photoUrl': photoUrl,
+      'photoUrl': finalPhotoUrl,
       'preferredGenres': normalizedGenres,
       'listeningActivity': {
         'totalPlays': 0,

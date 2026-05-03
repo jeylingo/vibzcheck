@@ -9,4 +9,16 @@ class StorageService {
     await ref.putFile(file);
     return await ref.getDownloadURL();
   }
+
+  Future<String> uploadProfilePicture(String uid, File file) async {
+    final ext = file.path.split('.').last;
+    final path = 'users/$uid/profile.$ext';
+    return await uploadFile(file, path);
+  }
+
+  Future<String> uploadRoomCover(String roomId, File file) async {
+    final ext = file.path.split('.').last;
+    final path = 'rooms/$roomId/cover.$ext';
+    return await uploadFile(file, path);
+  }
 }
