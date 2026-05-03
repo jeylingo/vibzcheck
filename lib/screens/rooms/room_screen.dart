@@ -18,8 +18,37 @@ class _RoomScreenState extends State<RoomScreen> {
   final RoomService service = RoomService();
   bool addingSong = false;
   String error = '';
+  
+  // Track user's votes for each song: songId -> voteValue (-1, 0, or 1)
+  final Map<String, int> userVotes = {};
 
   User? get currentUser => FirebaseAuth.instance.currentUser;
+
+  Future<void> _fetchUserVote(String songId) async {
+    if (currentUser == null) return;
+    try {
+      final voteDoc = await FirebaseFirestore.instance
+          .collection('rooms')
+          .doc(widget.roomId)
+          .collection('queue')
+          .doc(songId)
+          .collection('votes')
+          .doc(currentUser!.uid)
+          .get();
+      
+      if (voteDoc.exists) {
+        setState(() {
+          userVotes[songId] = (voteDoc.data()?['voteValue'] ?? 0) as int;
+        });
+      } else {
+        setState(() {
+          userVotes[songId] = 0;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error fetching vote for $songId: $e');
+    }
+  }
 
   Future<void> _showAddSongDialog() async {
     final titleController = TextEditingController();
@@ -100,9 +129,16 @@ class _RoomScreenState extends State<RoomScreen> {
 
   Future<void> _vote(String songId, int value) async {
     setState(() => error = '');
+    
+    // If user already voted this way, toggle it off (unvote)
+    final currentVote = userVotes[songId] ?? 0;
+    final voteToSend = currentVote == value ? 0 : value;
 
     try {
-      await service.voteOnSong(roomId: widget.roomId, songId: songId, voteValue: value);
+      await service.voteOnSong(roomId: widget.roomId, songId: songId, voteValue: voteToSend);
+      setState(() {
+        userVotes[songId] = voteToSend;
+      });
     } catch (e) {
       if (mounted) setState(() => error = e.toString());
     }
@@ -261,33 +297,63 @@ class _RoomScreenState extends State<RoomScreen> {
                           final artist = data['artist'] ?? '';
                           final score = data['voteScore'] ?? 0;
                           final genre = data['genre'] ?? '';
+                          
+                          // Fetch user's vote on first build
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (!userVotes.containsKey(doc.id)) {
+                              _fetchUserVote(doc.id);
+                            }
+                          });
+                          
+                          final userVote = userVotes[doc.id] ?? 0;
 
                           return Card(
                             child: ListTile(
                               title: Text(title),
                               subtitle: Text('$artist • $genre'),
-                              leading: CircleAvatar(child: Text('$score')),
+                              leading: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: score > 0 ? Colors.green[700] : score < 0 ? Colors.red[700] : Colors.grey[700],
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Text(
+                                      score > 0 ? '+$score' : '$score',
+                                      style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+                                    ),
+                                  ),
+                                ],
+                              ),
                               trailing: Wrap(
-                                spacing: 8,
+                                spacing: 4,
                                 children: [
                                   IconButton(
                                     onPressed: () => _vote(doc.id, 1),
                                     icon: const Icon(Icons.thumb_up),
+                                    color: userVote == 1 ? Colors.green : Colors.grey,
+                                    selectedIcon: const Icon(Icons.thumb_up),
+                                    isSelected: userVote == 1,
                                   ),
                                   IconButton(
                                     onPressed: () => _vote(doc.id, -1),
                                     icon: const Icon(Icons.thumb_down),
+                                    color: userVote == -1 ? Colors.red : Colors.grey,
+                                    selectedIcon: const Icon(Icons.thumb_down),
+                                    isSelected: userVote == -1,
                                   ),
-                                  if (isHost)
+                                  if (isHost) ...[
                                     IconButton(
                                       onPressed: () => _moveUp(doc.id),
                                       icon: const Icon(Icons.arrow_upward),
                                     ),
-                                  if (isHost)
                                     IconButton(
                                       onPressed: () => _remove(doc.id),
                                       icon: const Icon(Icons.delete),
                                     ),
+                                  ],
                                 ],
                               ),
                             ),
