@@ -44,6 +44,17 @@ service cloud.firestore {
         allow read: if isMember(roomId) || isOwner(roomId);
         allow create: if isMember(roomId) || isOwner(roomId);
         allow update, delete: if false;
+
+        match /reactions/{uid} {
+          allow read: if isMember(roomId) || isOwner(roomId);
+          allow create, update, delete: if signedIn() && uid == request.auth.uid && (isMember(roomId) || isOwner(roomId));
+        }
+      }
+
+      match /typingStatus/{uid} {
+        allow read: if isMember(roomId) || isOwner(roomId);
+        allow create, update: if signedIn() && uid == request.auth.uid && (isMember(roomId) || isOwner(roomId));
+        allow delete: if signedIn() && uid == request.auth.uid;
       }
 
       match /history/{historyId} {

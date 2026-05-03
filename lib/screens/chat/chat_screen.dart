@@ -18,7 +18,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final messageController = TextEditingController();
 
   Future<void> send() async {
-    await ChatService().sendMessage(
+    await ChatService().sendPlaylistMessage(
       widget.playlistId,
       messageController.text.trim(),
     );

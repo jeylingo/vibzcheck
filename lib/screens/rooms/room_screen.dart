@@ -1,7 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'dart:async';
 
+import '../../services/chat_service.dart';
 import '../../services/room_service.dart';
 
 class RoomScreen extends StatefulWidget {
@@ -16,13 +18,28 @@ class RoomScreen extends StatefulWidget {
 
 class _RoomScreenState extends State<RoomScreen> {
   final RoomService service = RoomService();
+  final ChatService chatService = ChatService();
   bool addingSong = false;
   String error = '';
   
   // Track user's votes for each song: songId -> voteValue (-1, 0, or 1)
   final Map<String, int> userVotes = {};
+  
+  // Chat state
+  final TextEditingController messageController = TextEditingController();
+  bool showChat = true;
+  Timer? typingTimer;
 
   User? get currentUser => FirebaseAuth.instance.currentUser;
+
+  @override
+  void dispose() {
+    messageController.dispose();
+    typingTimer?.cancel();
+    // Clear typing status when leaving
+    chatService.clearTyping(widget.roomId);
+    super.dispose();
+  }
 
   Future<void> _fetchUserVote(String songId) async {
     if (currentUser == null) return;
@@ -160,6 +177,32 @@ class _RoomScreenState extends State<RoomScreen> {
     }
   }
 
+  void _showHostMenu(String songId) {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => Wrap(
+        children: [
+          ListTile(
+            leading: const Icon(Icons.arrow_upward),
+            title: const Text('Move Up'),
+            onTap: () {
+              Navigator.pop(context);
+              _moveUp(songId);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.delete),
+            title: const Text('Remove'),
+            onTap: () {
+              Navigator.pop(context);
+              _remove(songId);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _skip() async {
     try {
       await service.skipToNext(roomId: widget.roomId);
@@ -176,12 +219,65 @@ class _RoomScreenState extends State<RoomScreen> {
     }
   }
 
+  Future<void> _sendChatMessage() async {
+    final content = messageController.text.trim();
+    if (content.isEmpty) return;
+
+    messageController.clear();
+    await chatService.clearTyping(widget.roomId);
+    typingTimer?.cancel();
+
+    try {
+      await chatService.sendMessage(
+        roomId: widget.roomId,
+        content: content,
+      );
+    } catch (e) {
+      if (mounted) {
+        setState(() => error = e.toString());
+      }
+    }
+  }
+
+  void _onMessageInputChanged(String text) {
+    typingTimer?.cancel();
+    
+    if (text.isEmpty) {
+      chatService.clearTyping(widget.roomId);
+      return;
+    }
+
+    // Set typing status when user starts typing
+    chatService.setTyping(widget.roomId);
+    
+    // Clear typing status 2 seconds after last keystroke
+    typingTimer = Timer(const Duration(seconds: 2), () {
+      chatService.clearTyping(widget.roomId);
+    });
+  }
+
+  String _formatTimestamp(Timestamp? timestamp) {
+    if (timestamp == null) return '';
+    final date = timestamp.toDate();
+    final now = DateTime.now();
+    final difference = now.difference(date);
+
+    if (difference.inSeconds < 60) {
+      return 'now';
+    } else if (difference.inMinutes < 60) {
+      return '${difference.inMinutes}m ago';
+    } else if (difference.inHours < 24) {
+      return '${difference.inHours}h ago';
+    } else {
+      return '${date.month}/${date.day} ${date.hour}:${date.minute.toString().padLeft(2, '0')}';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final queueStream = service.watchRoomQueue(widget.roomId);
     final membersStream = service.watchRoomMembers(widget.roomId);
     final roomStateStream = service.watchRoomState(widget.roomId);
-    final historyStream = service.watchRoomHistory(widget.roomId);
 
     return Scaffold(
       appBar: AppBar(
@@ -203,189 +299,288 @@ class _RoomScreenState extends State<RoomScreen> {
             final queueLocked = roomData?['queueLocked'] == true;
             final nowPlaying = roomData?['nowPlaying'] as Map<String, dynamic>?;
 
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            return Row(
               children: [
-                Text('Room ID: ${widget.roomId}', style: Theme.of(context).textTheme.bodyMedium),
-                const SizedBox(height: 12),
-                if (error.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: Text(error, style: const TextStyle(color: Colors.red)),
-                  ),
-                Card(
-                  child: ListTile(
-                    title: const Text('Now Playing'),
-                    subtitle: nowPlaying == null
-                        ? const Text('Nothing is playing yet')
-                        : Text('${nowPlaying['title'] ?? ''} • ${nowPlaying['artist'] ?? ''}'),
-                    trailing: isHost
-                        ? Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(queueLocked ? 'Locked' : 'Open'),
-                              Switch(value: queueLocked, onChanged: _toggleLock),
-                            ],
-                          )
-                        : Text(queueLocked ? 'Locked by host' : 'Open'),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                if (isHost)
-                  Row(
+                // Left side: Queue and controls
+                Expanded(
+                  flex: 2,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      ElevatedButton.icon(
-                        onPressed: _skip,
-                        icon: const Icon(Icons.skip_next),
-                        label: const Text('Skip'),
+                      Text('Room ID: ${widget.roomId}', style: Theme.of(context).textTheme.bodyMedium),
+                      const SizedBox(height: 12),
+                      if (error.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: Text(error, style: const TextStyle(color: Colors.red), maxLines: 2, overflow: TextOverflow.ellipsis),
+                        ),
+                      Card(
+                        child: ListTile(
+                          title: const Text('Now Playing'),
+                          subtitle: nowPlaying == null
+                              ? const Text('Nothing is playing yet')
+                              : Text('${nowPlaying['title'] ?? ''} • ${nowPlaying['artist'] ?? ''}', overflow: TextOverflow.ellipsis),
+                          trailing: isHost
+                              ? Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(queueLocked ? 'Locked' : 'Open', style: const TextStyle(fontSize: 12)),
+                                    Switch(value: queueLocked, onChanged: _toggleLock),
+                                  ],
+                                )
+                              : Text(queueLocked ? 'Locked by host' : 'Open', style: const TextStyle(fontSize: 12)),
+                        ),
                       ),
-                      const SizedBox(width: 12),
-                      OutlinedButton.icon(
-                        onPressed: addingSong ? null : _showAddSongDialog,
-                        icon: const Icon(Icons.add),
-                        label: const Text('Add Song'),
+                      const SizedBox(height: 12),
+                      if (isHost)
+                        Row(
+                          children: [
+                            ElevatedButton.icon(
+                              onPressed: _skip,
+                              icon: const Icon(Icons.skip_next),
+                              label: const Text('Skip'),
+                            ),
+                            const SizedBox(width: 12),
+                            OutlinedButton.icon(
+                              onPressed: addingSong ? null : _showAddSongDialog,
+                              icon: const Icon(Icons.add),
+                              label: const Text('Add Song'),
+                            ),
+                          ],
+                        )
+                      else
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: ElevatedButton.icon(
+                            onPressed: addingSong ? null : _showAddSongDialog,
+                            icon: const Icon(Icons.add),
+                            label: const Text('Add Song'),
+                          ),
+                        ),
+                      const SizedBox(height: 16),
+                      const Text('Members', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                      SizedBox(
+                        height: 60,
+                        child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                          stream: membersStream,
+                          builder: (context, snapshot) {
+                            if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+                            final docs = snapshot.data!.docs;
+                            if (docs.isEmpty) return const Center(child: Text('No members yet'));
+                            return ListView.separated(
+                              scrollDirection: Axis.horizontal,
+                              itemCount: docs.length,
+                              separatorBuilder: (context, index) => const SizedBox(width: 8),
+                              itemBuilder: (context, index) {
+                                final data = docs[index].data();
+                                return Chip(label: Text(data['displayName'] ?? data['uid'] ?? 'Member'));
+                              },
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      const Text('Up Next', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                      Expanded(
+                        child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                          stream: queueStream,
+                          builder: (context, snapshot) {
+                            if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+                            final docs = snapshot.data!.docs;
+                            if (docs.isEmpty) return const Center(child: Text('Queue is empty'));
+                            return ListView.separated(
+                              itemCount: docs.length,
+                              separatorBuilder: (context, index) => const SizedBox(height: 4),
+                              itemBuilder: (context, index) {
+                                final doc = docs[index];
+                                final data = doc.data();
+                                final title = data['title'] ?? '';
+                                final artist = data['artist'] ?? '';
+                                final score = data['voteScore'] ?? 0;
+                                
+                                WidgetsBinding.instance.addPostFrameCallback((_) {
+                                  if (!userVotes.containsKey(doc.id)) {
+                                    _fetchUserVote(doc.id);
+                                  }
+                                });
+                                
+                                final userVote = userVotes[doc.id] ?? 0;
+
+                                return Card(
+                                  child: ListTile(
+                                    dense: true,
+                                    title: Text(title, overflow: TextOverflow.ellipsis),
+                                    subtitle: Text('$artist', overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11)),
+                                    leading: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: score > 0 ? Colors.green[700] : score < 0 ? Colors.red[700] : Colors.grey[700],
+                                        borderRadius: BorderRadius.circular(4),
+                                      ),
+                                      child: Text(
+                                        score > 0 ? '+$score' : '$score',
+                                        style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 11),
+                                      ),
+                                    ),
+                                    trailing: Wrap(
+                                      spacing: 0,
+                                      children: [
+                                        SizedBox(
+                                          width: 32,
+                                          child: IconButton(
+                                            onPressed: () => _vote(doc.id, 1),
+                                            icon: const Icon(Icons.thumb_up, size: 16),
+                                            color: userVote == 1 ? Colors.green : Colors.grey,
+                                            isSelected: userVote == 1,
+                                          ),
+                                        ),
+                                        SizedBox(
+                                          width: 32,
+                                          child: IconButton(
+                                            onPressed: () => _vote(doc.id, -1),
+                                            icon: const Icon(Icons.thumb_down, size: 16),
+                                            color: userVote == -1 ? Colors.red : Colors.grey,
+                                            isSelected: userVote == -1,
+                                          ),
+                                        ),
+                                        if (isHost)
+                                          SizedBox(
+                                            width: 32,
+                                            child: IconButton(
+                                              onPressed: () => _showHostMenu(doc.id),
+                                              icon: const Icon(Icons.more_vert, size: 16),
+                                              padding: EdgeInsets.zero,
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            );
+                          },
+                        ),
                       ),
                     ],
-                  )
-                else
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: ElevatedButton.icon(
-                      onPressed: addingSong ? null : _showAddSongDialog,
-                      icon: const Icon(Icons.add),
-                      label: const Text('Add Song'),
-                    ),
-                  ),
-                const SizedBox(height: 16),
-                const Text('Members', style: TextStyle(fontWeight: FontWeight.bold)),
-                SizedBox(
-                  height: 84,
-                  child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                    stream: membersStream,
-                    builder: (context, snapshot) {
-                      if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-                      final docs = snapshot.data!.docs;
-                      if (docs.isEmpty) return const Center(child: Text('No members yet'));
-                      return ListView.separated(
-                        scrollDirection: Axis.horizontal,
-                        itemCount: docs.length,
-                        separatorBuilder: (context, index) => const SizedBox(width: 8),
-                        itemBuilder: (context, index) {
-                          final data = docs[index].data();
-                          return Chip(label: Text(data['displayName'] ?? data['uid'] ?? 'Member'));
-                        },
-                      );
-                    },
                   ),
                 ),
-                const SizedBox(height: 12),
-                const Text('Up Next', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(width: 12),
+                // Right side: Chat
                 Expanded(
-                  child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                    stream: queueStream,
-                    builder: (context, snapshot) {
-                      if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-                      final docs = snapshot.data!.docs;
-                      if (docs.isEmpty) return const Center(child: Text('Queue is empty'));
-                      return ListView.separated(
-                        itemCount: docs.length,
-                        separatorBuilder: (context, index) => const SizedBox(height: 8),
-                        itemBuilder: (context, index) {
-                          final doc = docs[index];
-                          final data = doc.data();
-                          final title = data['title'] ?? '';
-                          final artist = data['artist'] ?? '';
-                          final score = data['voteScore'] ?? 0;
-                          final genre = data['genre'] ?? '';
-                          
-                          // Fetch user's vote on first build
-                          WidgetsBinding.instance.addPostFrameCallback((_) {
-                            if (!userVotes.containsKey(doc.id)) {
-                              _fetchUserVote(doc.id);
-                            }
-                          });
-                          
-                          final userVote = userVotes[doc.id] ?? 0;
+                  flex: 1,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Text('Chat', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                      const SizedBox(height: 8),
+                      // Chat messages
+                      Expanded(
+                        child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                          stream: chatService.watchMessages(widget.roomId),
+                          builder: (context, snapshot) {
+                            if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+                            final messages = snapshot.data!.docs;
+                            return ListView.separated(
+                              reverse: false,
+                              itemCount: messages.length,
+                              separatorBuilder: (context, index) => const SizedBox(height: 4),
+                              itemBuilder: (context, index) {
+                                final msgDoc = messages[index];
+                                final msg = msgDoc.data();
+                                final displayName = msg['displayName'] ?? 'User';
+                                final content = msg['content'] ?? '';
+                                final timestamp = msg['timestamp'] as Timestamp?;
+                                final isOwnMessage = msg['userId'] == currentUser?.uid;
 
-                          return Card(
-                            child: ListTile(
-                              title: Text(title),
-                              subtitle: Text('$artist • $genre'),
-                              leading: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                return Align(
+                                  alignment: isOwnMessage ? Alignment.centerRight : Alignment.centerLeft,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                    constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.25),
                                     decoration: BoxDecoration(
-                                      color: score > 0 ? Colors.green[700] : score < 0 ? Colors.red[700] : Colors.grey[700],
+                                      color: isOwnMessage ? Colors.blue[600] : Colors.grey[600],
                                       borderRadius: BorderRadius.circular(8),
                                     ),
-                                    child: Text(
-                                      score > 0 ? '+$score' : '$score',
-                                      style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+                                    child: Column(
+                                      crossAxisAlignment: isOwnMessage ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(
+                                          displayName,
+                                          style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        Text(
+                                          content,
+                                          style: const TextStyle(fontSize: 11, color: Colors.white),
+                                          maxLines: 3,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        Text(
+                                          _formatTimestamp(timestamp),
+                                          style: const TextStyle(fontSize: 8, color: Colors.white70),
+                                        ),
+                                      ],
                                     ),
                                   ),
-                                ],
-                              ),
-                              trailing: Wrap(
-                                spacing: 4,
-                                children: [
-                                  IconButton(
-                                    onPressed: () => _vote(doc.id, 1),
-                                    icon: const Icon(Icons.thumb_up),
-                                    color: userVote == 1 ? Colors.green : Colors.grey,
-                                    selectedIcon: const Icon(Icons.thumb_up),
-                                    isSelected: userVote == 1,
-                                  ),
-                                  IconButton(
-                                    onPressed: () => _vote(doc.id, -1),
-                                    icon: const Icon(Icons.thumb_down),
-                                    color: userVote == -1 ? Colors.red : Colors.grey,
-                                    selectedIcon: const Icon(Icons.thumb_down),
-                                    isSelected: userVote == -1,
-                                  ),
-                                  if (isHost) ...[
-                                    IconButton(
-                                      onPressed: () => _moveUp(doc.id),
-                                      icon: const Icon(Icons.arrow_upward),
-                                    ),
-                                    IconButton(
-                                      onPressed: () => _remove(doc.id),
-                                      icon: const Icon(Icons.delete),
-                                    ),
-                                  ],
-                                ],
-                              ),
+                                );
+                              },
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      // Typing indicators
+                      StreamBuilder<List<Map<String, dynamic>>>(
+                        stream: chatService.watchTypingStatus(widget.roomId),
+                        builder: (context, snapshot) {
+                          if (!snapshot.hasData || snapshot.data!.isEmpty) return const SizedBox.shrink();
+                          final typing = snapshot.data!;
+                          final typingNames = typing.map((t) => t['displayName']).join(', ');
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Text(
+                              '$typingNames is typing...',
+                              style: const TextStyle(fontSize: 10, fontStyle: FontStyle.italic, color: Colors.grey),
+                              overflow: TextOverflow.ellipsis,
                             ),
                           );
                         },
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(height: 12),
-                const Text('History', style: TextStyle(fontWeight: FontWeight.bold)),
-                SizedBox(
-                  height: 120,
-                  child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                    stream: historyStream,
-                    builder: (context, snapshot) {
-                      if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-                      final docs = snapshot.data!.docs;
-                      if (docs.isEmpty) return const Center(child: Text('No history yet'));
-                      return ListView.separated(
-                        itemCount: docs.length,
-                        separatorBuilder: (context, index) => const SizedBox(height: 8),
-                        itemBuilder: (context, index) {
-                          final data = docs[index].data();
-                          return ListTile(
-                            dense: true,
-                            title: Text(data['title'] ?? ''),
-                            subtitle: Text(data['artist'] ?? ''),
-                          );
-                        },
-                      );
-                    },
+                      ),
+                      // Chat input
+                      Container(
+                        decoration: BoxDecoration(
+                          border: Border(top: BorderSide(color: Colors.grey[700]!)),
+                        ),
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: messageController,
+                                onChanged: _onMessageInputChanged,
+                                decoration: InputDecoration(
+                                  hintText: 'Message...',
+                                  hintStyle: const TextStyle(fontSize: 12),
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(4)),
+                                  isDense: true,
+                                ),
+                                maxLines: null,
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            IconButton(
+                              onPressed: _sendChatMessage,
+                              icon: const Icon(Icons.send, size: 18),
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
