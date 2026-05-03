@@ -282,8 +282,9 @@ class _RoomScreenState extends State<RoomScreen> {
           ],
         ),
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
         child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
           stream: roomStateStream,
           builder: (context, roomSnapshot) {
@@ -337,8 +338,8 @@ class _RoomScreenState extends State<RoomScreen> {
                           children: [
                             ElevatedButton.icon(
                               onPressed: _skip,
-                              icon: const Icon(Icons.skip_next),
-                              label: const Text('Skip'),
+                              icon: Icon(nowPlaying == null ? Icons.play_arrow : Icons.skip_next),
+                              label: Text(nowPlaying == null ? 'Play' : 'Play Next'),
                             ),
                             const SizedBox(width: 12),
                             OutlinedButton.icon(
@@ -627,6 +628,7 @@ class _RoomScreenState extends State<RoomScreen> {
           },
         ),
       ),
+      ), // SafeArea closing paren
     );
   }
 }

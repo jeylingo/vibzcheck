@@ -4,6 +4,8 @@ import '../../services/playlist_service.dart';
 import '../../services/history_service.dart';
 import '../chat/chat_screen.dart';
 
+import '../../services/music_metadata_service.dart';
+
 class PlaylistDetailScreen extends StatefulWidget {
   final String playlistId;
   final String title;
@@ -20,29 +22,46 @@ class PlaylistDetailScreen extends StatefulWidget {
 
 class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
   final titleController = TextEditingController();
-  final artistController = TextEditingController();
-  final genreController = TextEditingController();
-  final moodsController = TextEditingController();
+  List<Map<String, dynamic>> _searchResults = [];
+  bool _isSearching = false;
+  String _error = '';
 
-  Future<void> addSong() async {
-    final moods = moodsController.text
-        .split(',')
-        .map((m) => m.trim().toLowerCase())
-        .where((m) => m.isNotEmpty)
-        .toList();
+  Future<void> _searchAndAdd(String query) async {
+    if (query.trim().isEmpty) {
+      setState(() => _searchResults = []);
+      return;
+    }
+    setState(() {
+      _isSearching = true;
+      _error = '';
+    });
+    try {
+      final res = await MusicMetadataService().searchSpotifyTracks(query);
+      if (mounted) setState(() => _searchResults = res);
+    } catch (e) {
+      if (mounted) setState(() => _error = 'Search failed');
+    } finally {
+      if (mounted) setState(() => _isSearching = false);
+    }
+  }
+
+  Future<void> _addTrack(Map<String, dynamic> track) async {
+    final genres = (track['genres'] as List?)?.cast<String>() ?? [];
+    final genre = genres.isNotEmpty ? genres.first : 'pop';
+    final moods = (track['moods'] as List?)?.cast<String>() ?? [];
 
     await PlaylistService().addSong(
       widget.playlistId,
-      titleController.text.trim(),
-      artistController.text.trim(),
-      genreController.text.trim(),
+      track['title'] ?? 'Unknown',
+      track['artist'] ?? 'Unknown',
+      genre,
       moods,
     );
 
-    titleController.clear();
-    artistController.clear();
-    genreController.clear();
-    moodsController.clear();
+    setState(() {
+      _searchResults = [];
+      titleController.clear();
+    });
   }
 
   @override
@@ -53,6 +72,33 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
       appBar: AppBar(
         title: Text(widget.title),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.delete, color: Colors.red),
+            onPressed: () async {
+              final confirm = await showDialog<bool>(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('Delete Playlist?'),
+                  content: const Text('This action cannot be undone.'),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('Cancel'),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      child: const Text('Delete', style: TextStyle(color: Colors.red)),
+                    ),
+                  ],
+                ),
+              );
+
+              if (confirm == true) {
+                await service.deletePlaylist(widget.playlistId);
+                if (mounted) Navigator.pop(context);
+              }
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.chat),
             onPressed: () {
@@ -70,31 +116,56 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.all(14),
-            child: Column(
+            child: Row(
               children: [
-                TextField(
-                  controller: titleController,
-                  decoration: const InputDecoration(labelText: 'Song title'),
+                Expanded(
+                  child: TextField(
+                    controller: titleController,
+                    decoration: const InputDecoration(
+                      hintText: 'Search for a song...',
+                      prefixIcon: Icon(Icons.search),
+                    ),
+                    onSubmitted: (query) => _searchAndAdd(query),
+                  ),
                 ),
-                TextField(
-                  controller: artistController,
-                  decoration: const InputDecoration(labelText: 'Artist'),
-                ),
-                TextField(
-                  controller: genreController,
-                  decoration: const InputDecoration(labelText: 'Genre'),
-                ),
-                TextField(
-                  controller: moodsController,
-                  decoration: const InputDecoration(labelText: 'Moods: hype, chill'),
-                ),
-                ElevatedButton(
-                  onPressed: addSong,
-                  child: const Text('Add Song'),
-                ),
+                const SizedBox(width: 8),
+                if (_isSearching)
+                  const CircularProgressIndicator()
+                else
+                  ElevatedButton(
+                    onPressed: () => _searchAndAdd(titleController.text),
+                    child: const Text('Search'),
+                  ),
               ],
             ),
           ),
+          if (_error.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8.0),
+              child: Text(_error, style: const TextStyle(color: Colors.red)),
+            ),
+          if (_searchResults.isNotEmpty)
+            Container(
+              height: 200,
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surface,
+                border: Border(bottom: BorderSide(color: Colors.grey.withOpacity(0.2))),
+              ),
+              child: ListView.builder(
+                itemCount: _searchResults.length,
+                itemBuilder: (context, index) {
+                  final track = _searchResults[index];
+                  return ListTile(
+                    leading: track['albumArtUrl'] != null
+                        ? Image.network(track['albumArtUrl'], width: 40, height: 40, fit: BoxFit.cover)
+                        : const Icon(Icons.music_note),
+                    title: Text(track['title'] ?? '', maxLines: 1, overflow: TextOverflow.ellipsis),
+                    subtitle: Text(track['artist'] ?? '', maxLines: 1, overflow: TextOverflow.ellipsis),
+                    onTap: () => _addTrack(track),
+                  );
+                },
+              ),
+            ),
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
               stream: service.getSongs(widget.playlistId),

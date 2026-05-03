@@ -20,7 +20,13 @@ class _CreateRoomScreenState extends State<CreateRoomScreen> {
 
   Future<void> _pickImage() async {
     final picker = ImagePicker();
-    final pickedFile = await picker.pickImage(source: ImageSource.gallery, imageQuality: 70);
+    // Heavily compress and resize the image so it safely fits inside a Firestore document as Base64
+    final pickedFile = await picker.pickImage(
+      source: ImageSource.gallery, 
+      imageQuality: 40,
+      maxWidth: 400,
+      maxHeight: 400,
+    );
     if (pickedFile != null) {
       setState(() {
         _coverImage = File(pickedFile.path);

@@ -85,4 +85,8 @@ class PlaylistService {
       });
     });
   }
+
+  Future<void> deletePlaylist(String playlistId) async {
+    await db.collection('playlists').doc(playlistId).delete();
+  }
 }

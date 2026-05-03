@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
@@ -81,7 +82,11 @@ class HomeScreen extends StatelessWidget {
                             children: [
                               CircleAvatar(
                                 radius: 18,
-                                backgroundImage: photoUrl.isNotEmpty ? NetworkImage(photoUrl) : null,
+                                backgroundImage: photoUrl.isNotEmpty
+                                    ? (photoUrl.startsWith('data:')
+                                        ? MemoryImage(base64Decode(photoUrl.split(',').last)) as ImageProvider
+                                        : NetworkImage(photoUrl))
+                                    : null,
                                 child: photoUrl.isEmpty ? const Icon(Icons.person) : null,
                               ),
                               const SizedBox(width: 10),

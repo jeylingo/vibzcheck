@@ -57,7 +57,12 @@ class RoomService {
 
     String? coverUrl;
     if (coverImage != null) {
-      coverUrl = await StorageService().uploadRoomCover(roomRef.id, coverImage);
+      try {
+        coverUrl = await StorageService().uploadRoomCover(roomRef.id, coverImage);
+      } catch (e) {
+        print('Image upload failed (Firebase Storage might not be initialized): $e');
+        // Continue creating the room without an image
+      }
     }
 
     final batch = db.batch();

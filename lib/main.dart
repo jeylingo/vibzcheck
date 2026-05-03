@@ -3,7 +3,9 @@ import 'package:flutter/foundation.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'screens/auth/login_screen.dart';
+import 'screens/splash_screen.dart';
 import 'services/notification_service.dart';
+import 'theme/app_theme.dart';
 
 import 'package:provider/provider.dart';
 import 'providers/theme_provider.dart';
@@ -41,10 +43,10 @@ class VibzcheckApp extends StatelessWidget {
         return MaterialApp(
           title: 'Vibzcheck',
           debugShowCheckedModeBanner: false,
-          themeMode: themeProvider.themeMode,
+          themeMode: ThemeMode.dark, // Force dark mode to match our cool neon aesthetic
           theme: ThemeData.light(),
-          darkTheme: ThemeData.dark(),
-          home: const LoginScreen(),
+          darkTheme: AppTheme.darkTheme,
+          home: const SplashScreen(),
         );
       },
     );
