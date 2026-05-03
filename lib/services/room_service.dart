@@ -40,19 +40,9 @@ class RoomService {
   Future<Map<String, String>> createRoom(String title, {bool isPrivate = false}) async {
     final user = auth.currentUser!;
 
-    String code = _generateCode(6);
-    for (int i = 0; i < 5; i++) {
-      final snap = await db
-          .collection('rooms')
-          .where('code', isEqualTo: code)
-          .limit(1)
-          .get()
-          .timeout(const Duration(seconds: 8), onTimeout: () {
-        throw Exception('Room code check timed out. Check Firestore access.');
-      });
-      if (snap.docs.isEmpty) break;
-      code = _generateCode(6);
-    }
+    // Generate a short room code without querying Firestore first.
+    // A pre-read on the rooms collection can be rejected by security rules.
+    final code = _generateCode(6);
 
     final roomRef = db.collection('rooms').doc();
     final memberRef = roomRef.collection('members').doc(user.uid);

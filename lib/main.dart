@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'screens/auth/login_screen.dart';
@@ -10,6 +11,12 @@ Future<void> main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+
+  // Keep App Check out of debug builds so local auth works even when the
+  // Firebase App Check API is not enabled for this project.
+  if (kReleaseMode) {
+    // App Check can be enabled here later with production providers.
+  }
 
   await NotificationService().initNotifications();
 

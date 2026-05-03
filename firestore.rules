@@ -52,5 +52,34 @@ service cloud.firestore {
         allow update, delete: if false;
       }
     }
+
+    match /playlists/{playlistId} {
+      function playlistDoc() {
+        return get(/databases/$(database)/documents/playlists/$(playlistId));
+      }
+
+      function isPlaylistOwner() {
+        return signedIn() && playlistDoc().data.ownerId == request.auth.uid;
+      }
+
+      function canReadPlaylist() {
+        return signedIn() && (playlistDoc().data.ownerId == request.auth.uid || request.auth.uid in playlistDoc().data.members);
+      }
+
+      allow read: if canReadPlaylist();
+      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow update, delete: if isPlaylistOwner();
+
+      match /songs/{songId} {
+        allow read: if canReadPlaylist();
+        allow create: if signedIn() && (playlistDoc().data.ownerId == request.auth.uid || request.auth.uid in playlistDoc().data.members);
+        allow update, delete: if signedIn() && playlistDoc().data.ownerId == request.auth.uid;
+
+        match /votes/{uid} {
+          allow read: if canReadPlaylist();
+          allow create, update, delete: if signedIn() && uid == request.auth.uid && canReadPlaylist();
+        }
+      }
+    }
   }
 }

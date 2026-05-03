@@ -1,13 +1,32 @@
 {
   "project_info": {
-    "project_number": "58412226753",
-    "project_id": "vibzcheck-4ccd2",
-    "storage_bucket": "vibzcheck-4ccd2.firebasestorage.app"
+    "project_number": "475638086512",
+    "project_id": "fcm-app-c5b3f",
+    "storage_bucket": "fcm-app-c5b3f.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:58412226753:android:4aa5dd824f174c9d2d1c40",
+        "mobilesdk_app_id": "1:475638086512:android:ef673c49ac2532311eadb5",
+        "android_client_info": {
+          "package_name": "com.example.fcm_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCuJa-hCk2QhfENZz-RliaX2bdZerkRaDI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:475638086512:android:42f24b4d8ee235691eadb5",
         "android_client_info": {
           "package_name": "com.example.vibzcheck"
         }
@@ -15,7 +34,7 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyD-MwLRPA_2gL6oMX4PP79sXp1ODTEGPcw"
+          "current_key": "AIzaSyCuJa-hCk2QhfENZz-RliaX2bdZerkRaDI"
         }
       ],
       "services": {
