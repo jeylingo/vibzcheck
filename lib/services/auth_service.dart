@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'notification_service.dart';
 
 class AuthService {
   final FirebaseAuth auth = FirebaseAuth.instance;
@@ -48,6 +49,8 @@ class AuthService {
         .timeout(const Duration(seconds: 10),
             onTimeout: () => throw Exception(
                 'Saving profile took too long. Try again.'));
+
+      await NotificationService().syncCurrentUserToken();
   }
 
   Future<void> login(String email, String password) async {
@@ -67,6 +70,8 @@ class AuthService {
       'lastLoginAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
+
+    await NotificationService().syncCurrentUserToken();
   }
 
   Future<void> updateProfile({

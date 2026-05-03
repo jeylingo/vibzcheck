@@ -4,11 +4,13 @@ import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'music_metadata_service.dart';
+import 'notification_service.dart';
 
 class RoomService {
   final FirebaseFirestore db = FirebaseFirestore.instance;
   final FirebaseAuth auth = FirebaseAuth.instance;
   final MusicMetadataService metadataService = MusicMetadataService();
+  final NotificationService notificationService = NotificationService();
 
   Future<T> _withStepTimeout<T>(Future<T> future, String step, {Duration timeout = const Duration(seconds: 10)}) {
     return future.timeout(timeout, onTimeout: () {
@@ -74,6 +76,8 @@ class RoomService {
       timeout: const Duration(seconds: 12),
     );
 
+    await notificationService.subscribeToRoomTopic(roomRef.id);
+
     return {'roomId': roomRef.id, 'code': code};
   }
 
@@ -102,7 +106,34 @@ class RoomService {
       timeout: const Duration(seconds: 10),
     );
 
+    await notificationService.subscribeToRoomTopic(roomId);
+
     return roomId;
+  }
+
+  Future<List<String>> _memberUserIds(String roomId) async {
+    final members = await db.collection('rooms').doc(roomId).collection('members').get();
+    return members.docs.map((d) => (d.data()['uid'] ?? '').toString()).where((uid) => uid.isNotEmpty).toList();
+  }
+
+  Future<void> _publishRoomEvent({
+    required String roomId,
+    required String type,
+    required String title,
+    required String body,
+    required List<String> targetUserIds,
+    Map<String, dynamic> payload = const {},
+  }) async {
+    if (targetUserIds.isEmpty) return;
+    await db.collection('rooms').doc(roomId).collection('events').add({
+      'type': type,
+      'title': title,
+      'body': body,
+      'targetUserIds': targetUserIds,
+      'actorUserId': auth.currentUser?.uid,
+      'payload': payload,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
   }
 
   Stream<QuerySnapshot<Map<String, dynamic>>> watchRoomQueue(String roomId) {
@@ -169,6 +200,21 @@ class RoomService {
       timeout: const Duration(seconds: 12),
     );
 
+    final memberIds = await _memberUserIds(roomId);
+    final targets = memberIds.where((uid) => uid != user.uid).toList();
+    await _publishRoomEvent(
+      roomId: roomId,
+      type: 'song_added',
+      title: 'New Song Added',
+      body: '${user.displayName ?? 'Someone'} added $title by $artist',
+      targetUserIds: targets,
+      payload: {
+        'songId': songRef.id,
+        'songTitle': title,
+        'artist': artist,
+      },
+    );
+
     // Enrich song metadata asynchronously (fire-and-forget)
     _enrichSongAsync(roomId, songRef.id, title, artist);
   }
@@ -204,8 +250,8 @@ class RoomService {
     final songRef = db.collection('rooms').doc(roomId).collection('queue').doc(songId);
     final voteRef = songRef.collection('votes').doc(user.uid);
 
-    await _withStepTimeout(
-      db.runTransaction((transaction) async {
+    final result = await _withStepTimeout(
+      db.runTransaction<Map<String, dynamic>>((transaction) async {
         final songSnap = await transaction.get(songRef);
         if (!songSnap.exists) {
           throw Exception('Song not found');
@@ -233,10 +279,38 @@ class RoomService {
           'voteScore': nextScore,
           'updatedAt': FieldValue.serverTimestamp(),
         });
+
+        return {
+          'ownerId': (songData['addedBy'] ?? '').toString(),
+          'songTitle': (songData['title'] ?? '').toString(),
+          'artist': (songData['artist'] ?? '').toString(),
+          'currentScore': currentScore,
+          'nextScore': nextScore,
+        };
       }),
       'Voting on song',
       timeout: const Duration(seconds: 12),
     );
+
+    final ownerId = (result['ownerId'] ?? '').toString();
+    final wasUpvote = voteValue == 1;
+    final scoreIncreased = (result['nextScore'] as int) > (result['currentScore'] as int);
+    if (ownerId.isNotEmpty && ownerId != user.uid && wasUpvote && scoreIncreased) {
+      await _publishRoomEvent(
+        roomId: roomId,
+        type: 'song_voted_up',
+        title: 'Your Song Got Voted Up',
+        body: 'Your song ${result['songTitle']} got an upvote.',
+        targetUserIds: [ownerId],
+        payload: {
+          'songId': songId,
+          'songTitle': result['songTitle'],
+          'artist': result['artist'],
+          'newScore': result['nextScore'],
+        },
+      );
+    }
+
   }
 
   Future<void> moveSongUp({
@@ -310,7 +384,7 @@ class RoomService {
         final roomData = roomSnap.data();
         final currentNowPlaying = roomData?['nowPlaying'] as Map<String, dynamic>?;
 
-        final nextSnap = await queueRef.orderBy('position').orderBy('voteScore', descending: true).limit(1).get();
+        final nextSnap = await queueRef.orderBy('position').orderBy('voteScore', descending: true).limit(2).get();
         if (nextSnap.docs.isEmpty) {
           await roomRef.set({'nowPlaying': null}, SetOptions(merge: true));
           return;
@@ -318,6 +392,7 @@ class RoomService {
 
         final nextDoc = nextSnap.docs.first;
         final nextData = nextDoc.data();
+        final onDeck = nextSnap.docs.length > 1 ? nextSnap.docs[1].data() : null;
         final batch = db.batch();
 
         if (currentNowPlaying != null) {
@@ -339,6 +414,38 @@ class RoomService {
 
         batch.delete(nextDoc.reference);
         await batch.commit();
+
+        final actorId = auth.currentUser?.uid ?? '';
+        final memberIds = await _memberUserIds(roomId);
+        final roomTargets = memberIds.where((uid) => uid != actorId).toList();
+
+        await _publishRoomEvent(
+          roomId: roomId,
+          type: 'room_started',
+          title: 'Room Started Playing',
+          body: 'Now playing ${nextData['title'] ?? ''} by ${nextData['artist'] ?? ''}.',
+          targetUserIds: roomTargets,
+          payload: {
+            'songId': nextDoc.id,
+            'songTitle': nextData['title'],
+            'artist': nextData['artist'],
+          },
+        );
+
+        final onDeckUserId = (onDeck?['addedBy'] ?? '').toString();
+        if (onDeckUserId.isNotEmpty && onDeckUserId != actorId) {
+          await _publishRoomEvent(
+            roomId: roomId,
+            type: 'turn_to_act',
+            title: 'Your Turn Is Coming Up',
+            body: 'Your queued song ${onDeck?['title'] ?? ''} is up next. Get ready.',
+            targetUserIds: [onDeckUserId],
+            payload: {
+              'songTitle': onDeck?['title'],
+              'artist': onDeck?['artist'],
+            },
+          );
+        }
       }(),
       'Skipping to next song',
       timeout: const Duration(seconds: 12),

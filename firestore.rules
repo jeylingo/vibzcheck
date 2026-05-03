@@ -22,6 +22,11 @@ service cloud.firestore {
       allow create: if signedIn() && uid == request.auth.uid;
       allow update: if signedIn() && uid == request.auth.uid;
       allow delete: if false;
+
+      match /devices/{deviceId} {
+        allow read, create, update: if signedIn() && uid == request.auth.uid;
+        allow delete: if false;
+      }
     }
 
     match /listeningHistory/{historyId} {
@@ -73,6 +78,12 @@ service cloud.firestore {
       match /history/{historyId} {
         allow read: if isMember(roomId) || isOwner(roomId);
         allow create: if isOwner(roomId);
+        allow update, delete: if false;
+      }
+
+      match /events/{eventId} {
+        allow read: if isMember(roomId) || isOwner(roomId);
+        allow create: if isMember(roomId) || isOwner(roomId);
         allow update, delete: if false;
       }
     }
