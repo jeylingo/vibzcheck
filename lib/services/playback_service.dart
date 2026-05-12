@@ -8,6 +8,7 @@ import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'room_service.dart';
+import 'spotify_playback_service.dart';
 
 class PlaybackService {
   PlaybackService._internal();
@@ -15,6 +16,7 @@ class PlaybackService {
   factory PlaybackService() => _instance;
 
   final AudioPlayer _player = AudioPlayer();
+  final SpotifyPlaybackService _spotifyPlayback = SpotifyPlaybackService();
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
@@ -25,8 +27,10 @@ class PlaybackService {
   String? _currentRoomId;
   String? _currentSongId;
   bool _isHost = false;
+  bool _usingSpotifyRemote = false;
+  bool _spotifyIsPlaying = false;
 
-  bool get isPlaying => _player.playing;
+  bool get isPlaying => _usingSpotifyRemote ? _spotifyIsPlaying : _player.playing;
 
   Future<void> joinRoom(String roomId) async {
     _currentRoomId = roomId;
@@ -86,11 +90,25 @@ class PlaybackService {
     if (_currentRoomId == null || !_isHost) return;
 
     try {
+      var isPlaying = _player.playing;
+      var positionMs = _player.position.inMilliseconds;
+      var durationMs = _player.duration?.inMilliseconds ?? 0;
+
+      if (_usingSpotifyRemote) {
+        final spotifyState = await _spotifyPlayback.getPlayerState();
+        if (spotifyState != null) {
+          isPlaying = !spotifyState.isPaused;
+          positionMs = spotifyState.playbackPosition;
+          durationMs = spotifyState.track?.duration ?? 0;
+          _spotifyIsPlaying = isPlaying;
+        }
+      }
+
       await _db.collection('rooms').doc(_currentRoomId).update({
         'playbackState': {
-          'isPlaying': _player.playing,
-          'positionMs': _player.position.inMilliseconds,
-          'durationMs': _player.duration?.inMilliseconds ?? 0,
+          'isPlaying': isPlaying,
+          'positionMs': positionMs,
+          'durationMs': durationMs,
           'updatedAt': FieldValue.serverTimestamp(),
         }
       });
@@ -105,6 +123,7 @@ class PlaybackService {
 
     if (nowPlaying == null) {
       _currentSongId = null;
+      _usingSpotifyRemote = false;
       await _player.stop();
       return;
     }
@@ -114,6 +133,36 @@ class PlaybackService {
       _currentSongId = newSongId;
       await _loadAndPlaySong(nowPlaying);
     } else if (!_isHost && playbackState != null) {
+      final metadata = nowPlaying['metadata'] as Map<String, dynamic>?;
+      final spotifyUri = (metadata?['spotifyUri'] ?? '').toString();
+
+      if (_usingSpotifyRemote && spotifyUri.isNotEmpty) {
+        final hostIsPlaying = playbackState['isPlaying'] == true;
+        final hostPosMs = playbackState['positionMs'] as int? ?? 0;
+        final updatedAt = playbackState['updatedAt'] as Timestamp?;
+
+        if (hostIsPlaying) {
+          await _spotifyPlayback.resume();
+          _spotifyIsPlaying = true;
+        } else {
+          await _spotifyPlayback.pause();
+          _spotifyIsPlaying = false;
+        }
+
+        if (updatedAt != null && hostIsPlaying) {
+          final elapsedSinceUpdate = DateTime.now().difference(updatedAt.toDate()).inMilliseconds;
+          final estimatedHostPos = hostPosMs + elapsedSinceUpdate;
+
+          final spotifyState = await _spotifyPlayback.getPlayerState();
+          final localPos = spotifyState?.playbackPosition ?? 0;
+          final diff = (localPos - estimatedHostPos).abs();
+          if (diff > 3000) {
+            await _spotifyPlayback.seekTo(estimatedHostPos);
+          }
+        }
+        return;
+      }
+
       // Sync listener to host's playback state
       final hostIsPlaying = playbackState['isPlaying'] == true;
       final hostPosMs = playbackState['positionMs'] as int? ?? 0;
@@ -143,6 +192,23 @@ class PlaybackService {
   Future<void> _loadAndPlaySong(Map<String, dynamic> nowPlaying) async {
     final metadata = nowPlaying['metadata'] as Map<String, dynamic>?;
     if (metadata == null) return;
+
+    final spotifyUri = (metadata['spotifyUri'] ?? '').toString();
+    if (spotifyUri.isNotEmpty) {
+      final playedInSpotify = await _spotifyPlayback.playUri(spotifyUri);
+      if (playedInSpotify) {
+        _usingSpotifyRemote = true;
+        _spotifyIsPlaying = true;
+        await _player.stop();
+        if (_isHost) {
+          await _syncStateToFirestore();
+        }
+        return;
+      }
+    }
+
+    _usingSpotifyRemote = false;
+    _spotifyIsPlaying = false;
 
     final previewUrl = metadata['previewUrl'] as String?;
     if (previewUrl == null || previewUrl.isEmpty) return;
@@ -185,10 +251,21 @@ class PlaybackService {
   Future<void> togglePlayPause() async {
     if (!_isHost) return; // Only host controls playback directly
 
-    if (_player.playing) {
-      await _player.pause();
+    if (_usingSpotifyRemote) {
+      final state = await _spotifyPlayback.getPlayerState();
+      if (state == null || state.isPaused) {
+        await _spotifyPlayback.resume();
+        _spotifyIsPlaying = true;
+      } else {
+        await _spotifyPlayback.pause();
+        _spotifyIsPlaying = false;
+      }
     } else {
-      await _player.play();
+      if (_player.playing) {
+        await _player.pause();
+      } else {
+        await _player.play();
+      }
     }
     await _syncStateToFirestore();
   }
@@ -197,9 +274,12 @@ class PlaybackService {
     _currentRoomId = null;
     _currentSongId = null;
     _isHost = false;
+    _usingSpotifyRemote = false;
+    _spotifyIsPlaying = false;
     await _roomSubscription?.cancel();
     await _positionSubscription?.cancel();
     await _playerStateSubscription?.cancel();
     await _player.stop();
+    await _spotifyPlayback.disconnect();
   }
 }

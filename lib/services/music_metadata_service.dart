@@ -57,13 +57,25 @@ class MusicMetadataService {
     required String title,
     required String artist,
   }) async {
+    final spotifyMetadata = await _searchTrackMetadataOnSpotify(title: title, artist: artist);
+    if (spotifyMetadata != null) {
+      return spotifyMetadata;
+    }
+
+    return _searchTrackMetadataOnItunes(title: title, artist: artist);
+  }
+
+  Future<Map<String, dynamic>?> _searchTrackMetadataOnSpotify({
+    required String title,
+    required String artist,
+  }) async {
     final token = await _getSpotifyToken();
     if (token == null) return null;
 
     try {
       final query = Uri.encodeComponent('$title $artist');
       final response = await http.get(
-        Uri.parse('https://api.spotify.com/v1/search?q=$query&type=track&limit=1'),
+        Uri.parse('https://api.spotify.com/v1/search?q=$query&type=track&limit=1&market=US'),
         headers: {'Authorization': 'Bearer $token'},
       );
 
@@ -81,9 +93,11 @@ class MusicMetadataService {
               .cast<String>()
               .take(3)
               .toList();
+          final popularity = (track['popularity'] as num?)?.toInt() ?? 50;
 
           return {
             'spotifyTrackId': track['id'],
+            'spotifyUri': track['uri'],
             'spotifyUrl': track['external_urls']['spotify'],
             'previewUrl': track['preview_url'],
             'albumArtUrl': albumArtUrl,
@@ -92,8 +106,9 @@ class MusicMetadataService {
             'genres': genres,
             'explicit': track['explicit'],
             'duration': track['duration_ms'],
-            'popularity': track['popularity'],
-            'moods': _inferMoods(genres, track['popularity']),
+            'popularity': popularity,
+            'moods': _inferMoods(genres, popularity),
+            'source': 'spotify',
           };
         }
       }
@@ -103,48 +118,162 @@ class MusicMetadataService {
     return null;
   }
 
-  /// Search for multiple tracks (using iTunes API to avoid Spotify Premium requirements)
+  Future<Map<String, dynamic>?> _searchTrackMetadataOnItunes({
+    required String title,
+    required String artist,
+  }) async {
+    try {
+      final query = Uri.encodeComponent('$title $artist');
+      final response = await http.get(
+        Uri.parse('https://itunes.apple.com/search?term=$query&entity=song&limit=1'),
+      );
+
+      if (response.statusCode != 200) {
+        print('iTunes metadata fallback error: ${response.statusCode} - ${response.body}');
+        return null;
+      }
+
+      final json = jsonDecode(response.body);
+      final results = json['results'] as List?;
+      if (results == null || results.isEmpty) {
+        return null;
+      }
+
+      final track = results.first;
+      final albumArtUrl = (track['artworkUrl100'] as String?)?.replaceAll('100x100bb', '600x600bb');
+      final genres = [track['primaryGenreName'] ?? 'Pop'];
+
+      return {
+        'spotifyTrackId': track['trackId']?.toString() ?? '',
+        'spotifyUri': null,
+        'spotifyUrl': track['trackViewUrl'],
+        'previewUrl': track['previewUrl'],
+        'albumArtUrl': albumArtUrl ?? track['artworkUrl100'],
+        'albumName': track['collectionName'],
+        'releaseDate': track['releaseDate'],
+        'genres': genres,
+        'explicit': track['trackExplicitness'] == 'explicit',
+        'duration': track['trackTimeMillis'],
+        'popularity': 50,
+        'moods': _inferMoods(genres.cast<String>(), 50),
+        'source': 'itunes_fallback',
+      };
+    } catch (e) {
+      print('iTunes metadata fallback exception: $e');
+      return null;
+    }
+  }
+
+  /// Search tracks with Spotify first, then fall back to iTunes when needed.
   Future<List<Map<String, dynamic>>> searchSpotifyTracks(String query) async {
     if (query.trim().isEmpty) return [];
 
+    final spotifyResults = await _searchTracksOnSpotify(query);
+    if (spotifyResults.isNotEmpty) {
+      return spotifyResults;
+    }
+
+    return _searchTracksOnItunes(query);
+  }
+
+  Future<List<Map<String, dynamic>>> _searchTracksOnSpotify(String query) async {
+    final token = await _getSpotifyToken();
+    if (token == null) return [];
+
+    try {
+      final encodedQuery = Uri.encodeComponent(query);
+      final response = await http.get(
+        Uri.parse('https://api.spotify.com/v1/search?q=$encodedQuery&type=track&limit=10&market=US'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+
+      if (response.statusCode != 200) {
+        print('Spotify search list error: ${response.statusCode} - ${response.body}');
+        return [];
+      }
+
+      final json = jsonDecode(response.body);
+      final tracks = (json['tracks']?['items'] as List?) ?? const [];
+
+      return tracks.map((track) {
+        final artists = (track['artists'] as List?) ?? const [];
+        final artistNames = artists
+            .map((a) => (a['name'] ?? '').toString())
+            .where((name) => name.isNotEmpty)
+            .toList();
+
+        final albumImages = (track['album']?['images'] as List?) ?? const [];
+        final albumArtUrl = albumImages.isNotEmpty ? albumImages.first['url'] as String? : null;
+
+        final popularity = (track['popularity'] as num?)?.toInt() ?? 50;
+        final genreSeed = <String>['pop'];
+
+        return {
+          'spotifyTrackId': (track['id'] ?? '').toString(),
+          'spotifyUri': track['uri'],
+          'title': track['name'] ?? 'Unknown',
+          'artist': artistNames.isNotEmpty ? artistNames.join(', ') : 'Unknown',
+          'spotifyUrl': track['external_urls']?['spotify'],
+          'previewUrl': track['preview_url'],
+          'albumArtUrl': albumArtUrl,
+          'albumName': track['album']?['name'],
+          'releaseDate': track['album']?['release_date'],
+          'genres': genreSeed,
+          'explicit': track['explicit'] == true,
+          'duration': track['duration_ms'],
+          'popularity': popularity,
+          'moods': _inferMoods(genreSeed, popularity),
+          'source': 'spotify',
+        };
+      }).toList();
+    } catch (e) {
+      print('Spotify list search exception: $e');
+      return [];
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _searchTracksOnItunes(String query) async {
     try {
       final encodedQuery = Uri.encodeComponent(query);
       final response = await http.get(
         Uri.parse('https://itunes.apple.com/search?term=$encodedQuery&entity=song&limit=15'),
       );
 
-      if (response.statusCode == 200) {
-        final json = jsonDecode(response.body);
-        final results = json['results'] as List?;
-        
-        if (results == null) return [];
-
-        return results.map((track) {
-          final albumArtUrl = (track['artworkUrl100'] as String?)?.replaceAll('100x100bb', '600x600bb');
-          
-          return {
-            'spotifyTrackId': track['trackId']?.toString() ?? '',
-            'title': track['trackName'] ?? 'Unknown',
-            'artist': track['artistName'] ?? 'Unknown',
-            'spotifyUrl': track['trackViewUrl'],
-            'previewUrl': track['previewUrl'],
-            'albumArtUrl': albumArtUrl ?? track['artworkUrl100'],
-            'albumName': track['collectionName'],
-            'releaseDate': track['releaseDate'],
-            'genres': [track['primaryGenreName'] ?? 'Pop'],
-            'explicit': track['trackExplicitness'] == 'explicit',
-            'duration': track['trackTimeMillis'],
-            'popularity': 50,
-            'moods': _inferMoods([track['primaryGenreName'] ?? 'Pop'], 50),
-          };
-        }).toList();
-      } else {
-        print('iTunes API error: ${response.statusCode} - ${response.body}');
+      if (response.statusCode != 200) {
+        print('iTunes fallback error: ${response.statusCode} - ${response.body}');
+        return [];
       }
+
+      final json = jsonDecode(response.body);
+      final results = json['results'] as List?;
+      if (results == null) return [];
+
+      return results.map((track) {
+        final albumArtUrl = (track['artworkUrl100'] as String?)?.replaceAll('100x100bb', '600x600bb');
+        final genres = [track['primaryGenreName'] ?? 'Pop'];
+
+        return {
+          'spotifyTrackId': track['trackId']?.toString() ?? '',
+          'spotifyUri': null,
+          'title': track['trackName'] ?? 'Unknown',
+          'artist': track['artistName'] ?? 'Unknown',
+          'spotifyUrl': track['trackViewUrl'],
+          'previewUrl': track['previewUrl'],
+          'albumArtUrl': albumArtUrl ?? track['artworkUrl100'],
+          'albumName': track['collectionName'],
+          'releaseDate': track['releaseDate'],
+          'genres': genres,
+          'explicit': track['trackExplicitness'] == 'explicit',
+          'duration': track['trackTimeMillis'],
+          'popularity': 50,
+          'moods': _inferMoods(genres.cast<String>(), 50),
+          'source': 'itunes_fallback',
+        };
+      }).toList();
     } catch (e) {
-      print('iTunes UI search error: $e');
+      print('iTunes fallback exception: $e');
+      return [];
     }
-    return [];
   }
 
   /// Cache album art in Firebase Storage
@@ -192,6 +321,7 @@ class MusicMetadataService {
           .update({
         'metadata': {
           'spotifyTrackId': metadata['spotifyTrackId'],
+          'spotifyUri': metadata['spotifyUri'],
           'spotifyUrl': metadata['spotifyUrl'],
           'previewUrl': metadata['previewUrl'],
           'albumName': metadata['albumName'],
@@ -201,6 +331,7 @@ class MusicMetadataService {
           'explicit': metadata['explicit'],
           'duration': metadata['duration'],
           'popularity': metadata['popularity'],
+          'source': metadata['source'],
           'albumArtUrl': cachedAlbumArtUrl ?? metadata['albumArtUrl'],
           'enrichedAt': FieldValue.serverTimestamp(),
         },

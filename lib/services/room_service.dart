@@ -8,7 +8,6 @@ import 'music_metadata_service.dart';
 import 'notification_service.dart';
 import 'recommendation_service.dart';
 import 'storage_service.dart';
-import 'recommendation_service.dart';
 
 class RoomService {
   final FirebaseFirestore db = FirebaseFirestore.instance;
@@ -57,12 +56,7 @@ class RoomService {
 
     String? coverUrl;
     if (coverImage != null) {
-      try {
-        coverUrl = await StorageService().uploadRoomCover(roomRef.id, coverImage);
-      } catch (e) {
-        print('Image upload failed (Firebase Storage might not be initialized): $e');
-        // Continue creating the room without an image
-      }
+      coverUrl = await StorageService().uploadRoomCover(roomRef.id, coverImage);
     }
 
     final batch = db.batch();
@@ -178,7 +172,7 @@ class RoomService {
   }
 
   Stream<QuerySnapshot<Map<String, dynamic>>> watchRoomQueue(String roomId) {
-    return db.collection('rooms').doc(roomId).collection('queue').snapshots();
+    return db.collection('rooms').doc(roomId).collection('queue').orderBy('position').snapshots();
   }
 
   Stream<QuerySnapshot<Map<String, dynamic>>> watchRoomMembers(String roomId) {
@@ -229,10 +223,26 @@ class RoomService {
       'artist': artist,
       'genre': genre.toLowerCase(),
       'moods': moods,
+      if (exactMetadata != null)
+        'metadata': {
+          'spotifyTrackId': exactMetadata['spotifyTrackId'],
+          'spotifyUri': exactMetadata['spotifyUri'],
+          'spotifyUrl': exactMetadata['spotifyUrl'],
+          'previewUrl': exactMetadata['previewUrl'],
+          'albumName': exactMetadata['albumName'],
+          'releaseDate': exactMetadata['releaseDate'],
+          'genres': exactMetadata['genres'] ?? [genre],
+          'moods': exactMetadata['moods'] ?? moods,
+          'explicit': exactMetadata['explicit'],
+          'duration': exactMetadata['duration'],
+          'popularity': exactMetadata['popularity'],
+          'source': exactMetadata['source'] ?? 'spotify',
+          'albumArtUrl': exactMetadata['albumArtUrl'],
+          'enrichedAt': FieldValue.serverTimestamp(),
+        },
       'addedBy': user.uid,
       'voteScore': 0,
       'position': nextPosition,
-      'metadata': exactMetadata,
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
@@ -258,25 +268,10 @@ class RoomService {
       },
     );
 
-    // Fetch Spotify metadata asynchronously so it doesn't block adding to queue
-    unawaited(Future(() async {
-      try {
-        final metadata = await metadataService.searchTrackMetadata(title: title, artist: artist);
-        if (metadata != null) {
-          final cachedUrl = await metadataService.cacheAlbumArt(
-            roomId: roomId,
-            songId: songRef.id,
-            albumArtUrl: metadata['albumArtUrl'] ?? '',
-          );
-          await metadataService.enrichSongInFirestore(
-            roomId: roomId,
-            songId: songRef.id,
-            metadata: metadata,
-            cachedAlbumArtUrl: cachedUrl,
-          );
-        }
-      } catch (_) {}
-    }));
+    // Enrich song metadata asynchronously only when exact metadata was not supplied.
+    if (exactMetadata == null) {
+      _enrichSongAsync(roomId, songRef.id, title, artist);
+    }
   }
 
   /// Enrich song metadata asynchronously
@@ -444,18 +439,18 @@ class RoomService {
         final roomData = roomSnap.data();
         final currentNowPlaying = roomData?['nowPlaying'] as Map<String, dynamic>?;
 
-        final nextSnap = await queueRef.get();
-        final docs = nextSnap.docs.toList();
-        docs.sort((a, b) {
-          final scoreA = a.data()['voteScore'] ?? 0;
-          final scoreB = b.data()['voteScore'] ?? 0;
-          if (scoreA != scoreB) return scoreB.compareTo(scoreA);
-          final posA = a.data()['position'] ?? 0;
-          final posB = b.data()['position'] ?? 0;
-          return posA.compareTo(posB);
-        });
+        final queueSnap = await queueRef.get();
+        final sortedDocs = queueSnap.docs.toList()
+          ..sort((a, b) {
+            final scoreA = (a.data()['voteScore'] ?? 0) as int;
+            final scoreB = (b.data()['voteScore'] ?? 0) as int;
+            if (scoreA != scoreB) return scoreB.compareTo(scoreA);
+            final posA = (a.data()['position'] ?? 0) as int;
+            final posB = (b.data()['position'] ?? 0) as int;
+            return posA.compareTo(posB);
+          });
 
-        if (docs.isEmpty) {
+        if (sortedDocs.isEmpty) {
           if (roomData?['autoDjEnabled'] == true) {
             // Auto-DJ: add a recommendation
             final recs = await RecommendationService().getRecommendations();
@@ -480,9 +475,9 @@ class RoomService {
           return;
         }
 
-        final nextDoc = docs.first;
+        final nextDoc = sortedDocs.first;
         final nextData = nextDoc.data();
-        final onDeck = docs.length > 1 ? docs[1].data() : null;
+        final onDeck = sortedDocs.length > 1 ? sortedDocs[1].data() : null;
         final batch = db.batch();
 
         if (currentNowPlaying != null) {
